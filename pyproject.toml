@@ -1,0 +1,68 @@
+[project]
+name = "glupper"
+version = "0.1.0"
+description = "High-performance Twitter clone backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.23.2",
+    "asyncpg>=0.28.0",
+    "pydantic>=2.4.2",
+    "passlib>=1.7.4",
+    "python-jose>=3.3.0",
+    "python-multipart>=0.0.6",
+    "redis[hiredis]>=5.0.1",
+    "mypy>=1.15.0",
+    "ruff>=0.9.10",
+    "pytest>=8.3.5",
+    "pytest-cov>=6.0.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+# Allow autofix for all enabled rules (when `--fix`) is provided.
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # not interested in docstring linting
+    "D",
+    "ERA001", # flag commented-out code
+    "TD002", # missing issue link after TODO
+    "TD003", # TODO should start with an uppercase word
+    "T201", # flag print statements
+    "PTH", # encourage use of Pathlib over os.path
+    "UP007", # bad new union type annotation
+    "PLR0913", # too many arguments to function def,
+    "PD901", # dont call dfs df,
+    "G004",
+    "S311",
+    "PLR2004", # magic value warnings,
+    "FBT001", # allow bools in function params
+    "S101", # asserts are okay
+    "DTZ005", # absolutely do not want timezone aware timestamps
+    "DTZ006", # same
+    "FBT002"
+]
+fixable = ["A", "B", "C", "D", "E", "F", "COM"]
+unfixable = []
+
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+ignore_missing_imports = true
+no_implicit_optional = true
+no_implicit_reexport = true
+show_error_codes = true
+strict = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+
+# set lint.mccabe for max-complexity?
