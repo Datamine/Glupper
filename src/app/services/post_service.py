@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Optional
 from uuid import UUID, uuid4
 
 from glupper.app.core.db import pool, get_post_with_comments
@@ -9,8 +9,9 @@ from glupper.app.core.cache import (
     invalidate_post_cache,
     invalidate_user_timeline,
 )
+from glupper.app.services.archive_service import process_post_urls, get_archived_urls_for_post
 
-async def create_post(user_id: UUID, content: str, media_urls: Optional[List[str]] = None) -> Dict:
+async def create_post(user_id: UUID, content: str, media_urls: Optional[list[str]] = None) -> dict:
     """Create a new post"""
     post_id = uuid4()
     now = datetime.now()
@@ -41,6 +42,16 @@ async def create_post(user_id: UUID, content: str, media_urls: Optional[List[str
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
     
+    # Archive URLs in background (don't await)
+    # We don't want to block the post creation on archiving
+    # This task will run in the background
+    process_task = process_post_urls(
+        post_id=post_id,
+        user_id=user_id,
+        content=content,
+        media_urls=media_urls or []
+    )
+    
     # Invalidate timelines for followers
     # This would be better done with a background task in production
     async with pool.acquire() as conn:
@@ -53,7 +64,7 @@ async def create_post(user_id: UUID, content: str, media_urls: Optional[List[str
     
     return result
 
-async def get_post(post_id: UUID) -> Optional[Dict]:
+async def get_post(post_id: UUID) -> Optional[dict]:
     """Get a post by ID with caching"""
     # Try to get from cache first
     cached_post = await get_cached_post(post_id)
@@ -65,14 +76,19 @@ async def get_post(post_id: UUID) -> Optional[Dict]:
     if not post:
         return None
     
+    # Get archived URLs for the post
+    archived_urls = await get_archived_urls_for_post(post_id)
+    if archived_urls:
+        post["archived_urls"] = archived_urls
+    
     # Cache the result
     await cache_post(post_id, post)
     
     return post
 
 async def create_comment(
-    user_id: UUID, post_id: UUID, content: str, media_urls: Optional[List[str]] = None
-) -> Optional[Dict]:
+    user_id: UUID, post_id: UUID, content: str, media_urls: Optional[list[str]] = None
+) -> Optional[dict]:
     """Create a comment on a post (which is itself a post)"""
     comment_id = uuid4()
     now = datetime.now()
@@ -120,6 +136,14 @@ async def create_comment(
     result = dict(comment)
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
+    
+    # Archive URLs in background (don't await)
+    process_task = process_post_urls(
+        post_id=comment_id,
+        user_id=user_id,
+        content=content,
+        media_urls=media_urls or []
+    )
     
     return result
 
@@ -189,7 +213,7 @@ async def unlike_post(user_id: UUID, post_id: UUID) -> bool:
     
     return True
 
-async def repost(user_id: UUID, original_post_id: UUID) -> Optional[Dict]:
+async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
     """Repost (share) another post"""
     repost_id = uuid4()
     now = datetime.now()
@@ -248,9 +272,25 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[Dict]:
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
     
+    # We need to get the content and media_urls for the archive process
+    content = original_post["content"]
+    media_urls = original_post["media_urls"]
+    if media_urls is not None:
+        media_urls = list(media_urls)
+    else:
+        media_urls = []
+    
+    # Archive URLs in background (don't await)
+    process_task = process_post_urls(
+        post_id=repost_id,
+        user_id=user_id,
+        content=content,
+        media_urls=media_urls
+    )
+    
     return result
 
-async def get_user_posts(user_id: UUID, limit: int = 20, offset: int = 0) -> List[Dict]:
+async def get_user_posts(user_id: UUID, limit: int = 20, offset: int = 0) -> list[dict]:
     """Get posts created by a user"""
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -270,6 +310,12 @@ async def get_user_posts(user_id: UUID, limit: int = 20, offset: int = 0) -> Lis
         post = dict(row)
         if post["media_urls"] is not None:
             post["media_urls"] = list(post["media_urls"])
+        
+        # Get archived URLs for each post
+        archived_urls = await get_archived_urls_for_post(post["id"])
+        if archived_urls:
+            post["archived_urls"] = archived_urls
+            
         result.append(post)
         
     return result

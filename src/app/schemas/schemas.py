@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -55,6 +55,7 @@ class PostResponse(BaseModel):
     is_repost: bool = False
     original_post_id: Optional[UUID] = None
     liked_by_user: Optional[bool] = None
+    archived_urls: Optional[Dict[str, str]] = None
     created_at: datetime
 
 class PostDetailResponse(PostResponse):

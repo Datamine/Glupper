@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, EmailStr
@@ -29,6 +29,7 @@ class Post(BaseModel):
     repost_count: int = 0
     is_repost: bool = False
     original_post_id: Optional[UUID] = None
+    archived_urls: Dict[str, str] = Field(default_factory=dict)  # original_url -> archived_url
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

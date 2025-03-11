@@ -103,6 +103,19 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON follows(follower_id);
             CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id);
         """)
+        
+        # Archived URLs table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS archived_urls (
+                id SERIAL PRIMARY KEY,
+                post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+                original_url TEXT NOT NULL,
+                archived_url TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_archived_urls_post_id ON archived_urls(post_id);
+            CREATE INDEX IF NOT EXISTS idx_archived_urls_original_url ON archived_urls(original_url);
+        """)
 
 # High-performance query functions
 async def get_user_timeline_posts(user_id: UUID, limit: int = 20, before_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
@@ -157,6 +170,17 @@ async def get_user_timeline_posts(user_id: UUID, limit: int = 20, before_id: Opt
             # Parse the media_urls from PostgreSQL array to Python list
             if post['media_urls'] is not None:
                 post['media_urls'] = list(post['media_urls'])
+                
+            # Get archived URLs for this post
+            archived_urls_rows = await conn.fetch("""
+                SELECT original_url, archived_url 
+                FROM archived_urls 
+                WHERE post_id = $1
+            """, post['id'])
+            
+            if archived_urls_rows:
+                post['archived_urls'] = {row['original_url']: row['archived_url'] for row in archived_urls_rows}
+                
             posts.append(post)
             
         return posts
@@ -183,6 +207,16 @@ async def get_post_with_comments(post_id: UUID, limit: int = 20, offset: int = 0
         if post['media_urls'] is not None:
             post['media_urls'] = list(post['media_urls'])
             
+        # Get archived URLs for this post
+        archived_urls_rows = await conn.fetch("""
+            SELECT original_url, archived_url 
+            FROM archived_urls 
+            WHERE post_id = $1
+        """, post_id)
+        
+        if archived_urls_rows:
+            post['archived_urls'] = {row['original_url']: row['archived_url'] for row in archived_urls_rows}
+            
         # Get comments for this post
         comments_query = """
         SELECT 
@@ -202,6 +236,20 @@ async def get_post_with_comments(post_id: UUID, limit: int = 20, offset: int = 0
             comment = dict(row)
             if comment['media_urls'] is not None:
                 comment['media_urls'] = list(comment['media_urls'])
+                
+            # Get archived URLs for each comment
+            comment_archived_urls_rows = await conn.fetch("""
+                SELECT original_url, archived_url 
+                FROM archived_urls 
+                WHERE post_id = $1
+            """, comment['id'])
+            
+            if comment_archived_urls_rows:
+                comment['archived_urls'] = {
+                    row['original_url']: row['archived_url'] 
+                    for row in comment_archived_urls_rows
+                }
+                
             comments.append(comment)
             
         post['comments'] = comments
