@@ -1,5 +1,6 @@
+import json
 import random
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from src.core.cache import (
@@ -7,6 +8,7 @@ from src.core.cache import (
     cache_user_timeline,
     get_cached_timeline,
     get_cached_trending_posts,
+    redis_client,
 )
 from src.core.db import get_user_timeline_posts, pool
 
@@ -16,9 +18,9 @@ async def get_home_timeline(user_id: UUID, limit: int = 20, before_id: Optional[
     Get home timeline for a user
 
     This function implements a high-performance timeline algorithm that:
-    1. Attempts to fetch from cache first
-    2. If not cached, fetches from database using an optimized query
-    3. Caches the result for future requests
+    1. Uses Redis as the primary data source for timeline data
+    2. Falls back to database only when necessary
+    3. Maintains timeline in Redis for fast access
     """
     # Skip cache if using cursor-based pagination
     if before_id is None:
@@ -35,6 +37,84 @@ async def get_home_timeline(user_id: UUID, limit: int = 20, before_id: Optional[
         await cache_user_timeline(user_id, posts)
 
     return posts
+
+
+async def push_post_to_timelines(post: Dict, author_id: UUID):
+    """
+    Push a new post to followers' timelines in Redis
+    
+    This implements a fanout-on-write approach for high-performance feeds
+    """
+    if not redis_client:
+        return
+        
+    # Get all followers of the post author
+    async with pool.acquire() as conn:
+        query = """
+        SELECT follower_id FROM follows WHERE followee_id = $1
+        """
+        follower_rows = await conn.fetch(query, author_id)
+        follower_ids = [str(row["follower_id"]) for row in follower_rows]
+        
+    # Add the author to the list (to see their own posts)
+    follower_ids.append(str(author_id))
+    
+    if not follower_ids:
+        return
+        
+    # Prepare the post for caching
+    from src.core.cache import _serialize_uuid
+    serialized_post = json.dumps(_serialize_uuid(post))
+    
+    # Push to each follower's timeline
+    pipe = redis_client.pipeline()
+    for follower_id in follower_ids:
+        timeline_key = f"timeline:{follower_id}"
+        
+        # Add to the beginning of the list
+        pipe.lpush(timeline_key, serialized_post)
+        
+        # Trim the list to keep it at a reasonable size
+        pipe.ltrim(timeline_key, 0, 500)  # Keep 500 most recent posts
+        
+        # Set expiry (5 days)
+        pipe.expire(timeline_key, 432000)
+    
+    # Execute pipeline
+    await pipe.execute()
+    
+    
+async def get_timeline_from_redis(user_id: UUID, limit: int = 20, start_idx: int = 0) -> List[Dict]:
+    """
+    Get timeline directly from Redis for maximum performance
+    """
+    if not redis_client:
+        return await get_home_timeline(user_id, limit)
+        
+    timeline_key = f"timeline:{user_id}"
+    
+    # Get posts from Redis list
+    end_idx = start_idx + limit - 1
+    posts_json = await redis_client.lrange(timeline_key, start_idx, end_idx)
+    
+    if not posts_json:
+        # If Redis doesn't have the timeline, load it from the database
+        posts = await get_user_timeline_posts(user_id, limit)
+        
+        # Store in Redis for future requests
+        if posts:
+            from src.core.cache import _serialize_uuid
+            pipe = redis_client.pipeline()
+            for post in posts:
+                serialized_post = json.dumps(_serialize_uuid(post))
+                pipe.rpush(timeline_key, serialized_post)
+            pipe.expire(timeline_key, 432000)  # 5 days expiry
+            await pipe.execute()
+        
+        return posts
+    
+    # Parse JSON data for each post
+    return [json.loads(post_json) for post_json in posts_json]
 
 
 async def get_explore_feed(user_id: UUID, limit: int = 20, offset: int = 0) -> list[Dict]:

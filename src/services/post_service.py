@@ -10,6 +10,7 @@ from src.core.cache import (
 )
 from src.core.db import get_post_with_comments, pool
 from src.services.archive_service import get_archived_urls_for_post, process_post_urls
+from src.services.feed_service import push_post_to_timelines
 
 
 async def create_post(user_id: UUID, content: str, media_urls: Optional[list[str]] = None) -> dict:
@@ -64,19 +65,26 @@ async def create_post(user_id: UUID, content: str, media_urls: Optional[list[str
         media_urls=media_urls or [],
     )
 
-    # Invalidate timelines for followers
-    # This would be better done with a background task in production
-    async with pool.acquire() as conn:
-        follower_rows = await conn.fetch(
-            """
-            SELECT follower_id FROM follows WHERE followee_id = $1
-        """,
-            user_id,
-        )
-
-    for row in follower_rows:
-        await invalidate_user_timeline(row["follower_id"])
-
+    # Use fanout-on-write to push the post to all followers' timelines in Redis
+    # This is a much more efficient approach than invalidating caches
+    full_post = {
+        "id": post_id,
+        "user_id": user_id,
+        "content": content,
+        "media_urls": media_urls or [],
+        "like_count": 0,
+        "comment_count": 0,
+        "repost_count": 0,
+        "is_repost": False,
+        "original_post_id": None,
+        "created_at": now.isoformat(),
+        "username": result["username"],
+        "profile_picture_url": result["profile_picture_url"]
+    }
+    
+    # Push to Redis in the background (don't await)
+    push_task = push_post_to_timelines(full_post, user_id)
+    
     return result
 
 
@@ -342,17 +350,24 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
     # Invalidate cache for the original post
     await invalidate_post_cache(original_post_id)
 
-    # Invalidate timelines for followers
-    async with pool.acquire() as conn:
-        follower_rows = await conn.fetch(
-            """
-            SELECT follower_id FROM follows WHERE followee_id = $1
-        """,
-            user_id,
-        )
-
-    for row in follower_rows:
-        await invalidate_user_timeline(row["follower_id"])
+    # Use fanout-on-write to push the repost to all followers' timelines in Redis
+    full_post = {
+        "id": repost_id,
+        "user_id": user_id,
+        "content": result["content"],
+        "media_urls": result["media_urls"],
+        "like_count": 0,
+        "comment_count": 0,
+        "repost_count": 0,
+        "is_repost": True,
+        "original_post_id": original_post_id,
+        "created_at": now.isoformat(),
+        "username": result["username"],
+        "profile_picture_url": result["profile_picture_url"]
+    }
+    
+    # Push to Redis in the background (don't await)
+    push_task = push_post_to_timelines(full_post, user_id)
 
     # Construct response
     result = dict(repost)

@@ -14,6 +14,7 @@ from src.schemas.schemas import (
 from src.services.feed_service import (
     get_explore_feed,
     get_home_timeline,
+    get_timeline_from_redis,
     get_trending_posts,
     get_trending_topics,
 )
@@ -42,15 +43,26 @@ async def home_timeline(
         except:
             pass
 
-    # Get timeline posts
-    posts = await get_home_timeline(current_user.id, limit, before_id)
+    # Get timeline posts directly from Redis for maximum performance
+    # If cursor is provided, we'll convert it to a start index for Redis
+    start_idx = 0
+    if before_id:
+        # This is a simplified approach - in production you'd want to handle
+        # the cursor differently to support proper pagination with Redis lists
+        try:
+            # If we're using UUIDs as cursors, we'll treat it as an offset instead
+            start_idx = int(str(before_id))
+        except:
+            pass
+    
+    posts = await get_timeline_from_redis(current_user.id, limit, start_idx)
 
     # Generate next cursor
     next_cursor = None
     if posts and len(posts) == limit:
-        last_post_id = posts[-1]["id"]
-        cursor_str = str(last_post_id)
-        next_cursor = base64.b64encode(cursor_str.encode("utf-8")).decode("utf-8")
+        # For Redis-based pagination, use the next index as cursor
+        next_idx = start_idx + limit
+        next_cursor = base64.b64encode(str(next_idx).encode("utf-8")).decode("utf-8")
 
     return {
         "posts": posts,
