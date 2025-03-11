@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
+
 
 # Auth Schemas
 class UserCreate(BaseModel):
@@ -11,13 +12,16 @@ class UserCreate(BaseModel):
     password: str
     bio: Optional[str] = None
 
+
 class UserLogin(BaseModel):
     username: str
     password: str
 
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class UserResponse(BaseModel):
     id: UUID
@@ -29,18 +33,22 @@ class UserResponse(BaseModel):
     following_count: int
     created_at: datetime
 
+
 class UserUpdateRequest(BaseModel):
     bio: Optional[str] = None
     profile_picture_url: Optional[str] = None
 
+
 # Post Schemas
 class PostCreate(BaseModel):
     content: str
-    media_urls: Optional[List[str]] = None
+    media_urls: Optional[list[str]] = None
+
 
 class CommentCreate(BaseModel):
     content: str
-    media_urls: Optional[List[str]] = None
+    media_urls: Optional[list[str]] = None
+
 
 class PostResponse(BaseModel):
     id: UUID
@@ -48,22 +56,25 @@ class PostResponse(BaseModel):
     username: str
     profile_picture_url: Optional[str] = None
     content: str
-    media_urls: Optional[List[str]] = None
+    media_urls: Optional[list[str]] = None
     like_count: int
     comment_count: int
     repost_count: int
     is_repost: bool = False
     original_post_id: Optional[UUID] = None
     liked_by_user: Optional[bool] = None
-    archived_urls: Optional[Dict[str, str]] = None
+    archived_urls: Optional[dict[str, str]] = None
     created_at: datetime
 
+
 class PostDetailResponse(PostResponse):
-    comments: List[PostResponse] = []
+    comments: list[PostResponse] = []
+
 
 class FeedResponse(BaseModel):
-    posts: List[PostResponse]
+    posts: list[PostResponse]
     next_cursor: Optional[str] = None
+
 
 class TrendingTopic(BaseModel):
     name: str

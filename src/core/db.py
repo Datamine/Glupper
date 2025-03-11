@@ -1,30 +1,34 @@
-import os
-from typing import Dict, List, Optional, Any, Union
+from typing import Any, Optional
 from uuid import UUID
 
 import asyncpg
-from asyncpg import Pool, Connection
+from asyncpg import Connection, Pool
+
+from src.config_secrets import DATABASE_URL
 
 # Database connection pool
 pool: Optional[Pool] = None
+
 
 async def init_db():
     """Initialize database connection pool"""
     global pool
     pool = await asyncpg.create_pool(
-        os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost/glupper"),
+        DATABASE_URL,
         min_size=10,
         max_size=100,  # High connection count for performance
     )
-    
+
     # Initialize database schema
     await _create_tables()
+
 
 async def close_db():
     """Close database connection pool"""
     global pool
     if pool:
         await pool.close()
+
 
 async def get_connection() -> Connection:
     """Get a connection from the pool"""
@@ -33,10 +37,12 @@ async def get_connection() -> Connection:
     assert pool is not None
     return await pool.acquire()
 
+
 async def release_connection(conn: Connection):
     """Release a connection back to the pool"""
     if pool:
         await pool.release(conn)
+
 
 # Create tables
 async def _create_tables():
@@ -58,7 +64,7 @@ async def _create_tables():
             );
             CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
         """)
-        
+
         # Posts table
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS posts (
@@ -77,7 +83,7 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_posts_user_id ON posts(user_id);
             CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);
         """)
-        
+
         # Likes table
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS likes (
@@ -90,7 +96,7 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_likes_post_id ON likes(post_id);
             CREATE INDEX IF NOT EXISTS idx_likes_user_id ON likes(user_id);
         """)
-        
+
         # Follows table
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS follows (
@@ -103,7 +109,7 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON follows(follower_id);
             CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id);
         """)
-        
+
         # Archived URLs table
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS archived_urls (
@@ -117,11 +123,16 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_archived_urls_original_url ON archived_urls(original_url);
         """)
 
+
 # High-performance query functions
-async def get_user_timeline_posts(user_id: UUID, limit: int = 20, before_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
+async def get_user_timeline_posts(
+    user_id: UUID,
+    limit: int = 20,
+    before_id: Optional[UUID] = None,
+) -> list[dict[str, Any]]:
     """
     Get timeline posts for a user - highly optimized query
-    
+
     This uses a complex but efficient query that:
     1. Fetches posts from followed users + own posts
     2. Uses cursor-based pagination for performance
@@ -133,8 +144,8 @@ async def get_user_timeline_posts(user_id: UUID, limit: int = 20, before_id: Opt
         WITH followed_users AS (
             SELECT followee_id FROM follows WHERE follower_id = $1
         )
-        SELECT 
-            p.id, p.content, p.media_urls, p.like_count, p.comment_count, 
+        SELECT
+            p.id, p.content, p.media_urls, p.like_count, p.comment_count,
             p.repost_count, p.is_repost, p.original_post_id, p.created_at,
             u.id as user_id, u.username, u.profile_picture_url,
             EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = $1) as liked_by_user
@@ -143,9 +154,9 @@ async def get_user_timeline_posts(user_id: UUID, limit: int = 20, before_id: Opt
         WHERE p.user_id IN (SELECT followee_id FROM followed_users)
            OR p.user_id = $1
         """
-        
+
         params = [user_id, limit]
-        
+
         # Add cursor-based pagination if a before_id is provided
         if before_id:
             query += """
@@ -155,72 +166,79 @@ async def get_user_timeline_posts(user_id: UUID, limit: int = 20, before_id: Opt
             )
             """
             params.append(before_id)
-            
+
         query += """
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT $2
         """
-        
+
         result = await conn.fetch(query, *params)
-        
+
         # Convert the results to a list of dictionaries
         posts = []
         for row in result:
             post = dict(row)
             # Parse the media_urls from PostgreSQL array to Python list
-            if post['media_urls'] is not None:
-                post['media_urls'] = list(post['media_urls'])
-                
+            if post["media_urls"] is not None:
+                post["media_urls"] = list(post["media_urls"])
+
             # Get archived URLs for this post
-            archived_urls_rows = await conn.fetch("""
-                SELECT original_url, archived_url 
-                FROM archived_urls 
+            archived_urls_rows = await conn.fetch(
+                """
+                SELECT original_url, archived_url
+                FROM archived_urls
                 WHERE post_id = $1
-            """, post['id'])
-            
+            """,
+                post["id"],
+            )
+
             if archived_urls_rows:
-                post['archived_urls'] = {row['original_url']: row['archived_url'] for row in archived_urls_rows}
-                
+                post["archived_urls"] = {row["original_url"]: row["archived_url"] for row in archived_urls_rows}
+
             posts.append(post)
-            
+
         return posts
 
-async def get_post_with_comments(post_id: UUID, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+
+async def get_post_with_comments(post_id: UUID, limit: int = 20, offset: int = 0) -> dict[str, Any]:
     """Get a post with its comments in a single efficient query"""
     async with pool.acquire() as conn:
         # Get the post with user info
         post_query = """
-        SELECT 
-            p.id, p.content, p.media_urls, p.like_count, p.comment_count, 
+        SELECT
+            p.id, p.content, p.media_urls, p.like_count, p.comment_count,
             p.repost_count, p.is_repost, p.original_post_id, p.created_at,
             u.id as user_id, u.username, u.profile_picture_url
         FROM posts p
         JOIN users u ON p.user_id = u.id
         WHERE p.id = $1
         """
-        
+
         post_row = await conn.fetchrow(post_query, post_id)
         if not post_row:
             return {}
-            
+
         post = dict(post_row)
-        if post['media_urls'] is not None:
-            post['media_urls'] = list(post['media_urls'])
-            
+        if post["media_urls"] is not None:
+            post["media_urls"] = list(post["media_urls"])
+
         # Get archived URLs for this post
-        archived_urls_rows = await conn.fetch("""
-            SELECT original_url, archived_url 
-            FROM archived_urls 
+        archived_urls_rows = await conn.fetch(
+            """
+            SELECT original_url, archived_url
+            FROM archived_urls
             WHERE post_id = $1
-        """, post_id)
-        
+        """,
+            post_id,
+        )
+
         if archived_urls_rows:
-            post['archived_urls'] = {row['original_url']: row['archived_url'] for row in archived_urls_rows}
-            
+            post["archived_urls"] = {row["original_url"]: row["archived_url"] for row in archived_urls_rows}
+
         # Get comments for this post
         comments_query = """
-        SELECT 
-            p.id, p.content, p.media_urls, p.like_count, p.comment_count, 
+        SELECT
+            p.id, p.content, p.media_urls, p.like_count, p.comment_count,
             p.created_at,
             u.id as user_id, u.username, u.profile_picture_url
         FROM posts p
@@ -229,28 +247,30 @@ async def get_post_with_comments(post_id: UUID, limit: int = 20, offset: int = 0
         ORDER BY p.created_at DESC
         LIMIT $2 OFFSET $3
         """
-        
+
         comments_rows = await conn.fetch(comments_query, post_id, limit, offset)
         comments = []
         for row in comments_rows:
             comment = dict(row)
-            if comment['media_urls'] is not None:
-                comment['media_urls'] = list(comment['media_urls'])
-                
+            if comment["media_urls"] is not None:
+                comment["media_urls"] = list(comment["media_urls"])
+
             # Get archived URLs for each comment
-            comment_archived_urls_rows = await conn.fetch("""
-                SELECT original_url, archived_url 
-                FROM archived_urls 
+            comment_archived_urls_rows = await conn.fetch(
+                """
+                SELECT original_url, archived_url
+                FROM archived_urls
                 WHERE post_id = $1
-            """, comment['id'])
-            
+            """,
+                comment["id"],
+            )
+
             if comment_archived_urls_rows:
-                comment['archived_urls'] = {
-                    row['original_url']: row['archived_url'] 
-                    for row in comment_archived_urls_rows
+                comment["archived_urls"] = {
+                    row["original_url"]: row["archived_url"] for row in comment_archived_urls_rows
                 }
-                
+
             comments.append(comment)
-            
-        post['comments'] = comments
+
+        post["comments"] = comments
         return post

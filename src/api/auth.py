@@ -4,17 +4,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from glupper.app.core.auth import (
+from src.core.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     create_access_token,
     get_current_user,
     verify_password,
 )
-from glupper.app.models.models import User
-from glupper.app.schemas.schemas import Token, UserCreate, UserResponse
-from glupper.app.services.user_service import create_user, get_user_by_username
+from src.models.models import User
+from src.schemas.schemas import Token, UserCreate, UserResponse
+from src.services.user_service import create_user, get_user_by_username
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
 
 @router.post("/register")
 async def register(user_data: UserCreate) -> UserResponse:
@@ -32,6 +33,7 @@ async def register(user_data: UserCreate) -> UserResponse:
         password=user_data.password,
         bio=user_data.bio,
     )
+
 
 @router.post("/login")
 async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
@@ -55,6 +57,7 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> T
         expires_delta=access_token_expires,
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @router.get("/me")
 async def get_current_user_info(current_user: Annotated[User, Depends(get_current_user)]) -> User:

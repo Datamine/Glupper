@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 # Database models
@@ -23,13 +23,13 @@ class Post(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     user_id: UUID
     content: str
-    media_urls: List[str] = Field(default_factory=list)
+    media_urls: list[str] = Field(default_factory=list)
     like_count: int = 0
     comment_count: int = 0
     repost_count: int = 0
     is_repost: bool = False
     original_post_id: Optional[UUID] = None
-    archived_urls: Dict[str, str] = Field(default_factory=dict)  # original_url -> archived_url
+    archived_urls: dict[str, str] = Field(default_factory=dict)  # original_url -> archived_url
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -50,6 +50,7 @@ class Follow(BaseModel):
 
 class Timeline(BaseModel):
     """Cache model for user timeline"""
+
     user_id: UUID
-    post_ids: List[UUID] = Field(default_factory=list)
+    post_ids: list[UUID] = Field(default_factory=list)
     last_updated: datetime = Field(default_factory=datetime.utcnow)
