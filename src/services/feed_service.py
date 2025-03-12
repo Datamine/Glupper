@@ -12,6 +12,59 @@ from src.core.cache import (
 from src.core.db import get_user_timeline_posts, pool
 
 
+async def enhance_reposts_with_original_info(posts: List[Dict]) -> List[Dict]:
+    """
+    Enhance reposts with information about the original post and author.
+    
+    For each repost, fetch the original post author information and add it
+    to the repost data structure to make it easier for UIs to display both
+    the person who reposted and the original author.
+    """
+    if not posts:
+        return posts
+        
+    # Find all reposts and gather original post IDs
+    repost_indices = []
+    original_post_ids = []
+    
+    for i, post in enumerate(posts):
+        if post.get("is_repost") and post.get("original_post_id"):
+            repost_indices.append(i)
+            original_post_ids.append(post["original_post_id"])
+            
+    if not original_post_ids:
+        return posts
+    
+    # Get original post info in a single query
+    async with pool.acquire() as conn:
+        query = """
+        SELECT 
+            p.id, u.username as original_username, u.profile_picture_url as original_profile_picture_url,
+            u.id as original_user_id
+        FROM posts p
+        JOIN users u ON p.user_id = u.id
+        WHERE p.id = ANY($1)
+        """
+        rows = await conn.fetch(query, original_post_ids)
+        
+        # Create mapping of original post ID to author info
+        original_info = {}
+        for row in rows:
+            original_info[row["id"]] = {
+                "original_username": row["original_username"],
+                "original_profile_picture_url": row["original_profile_picture_url"],
+                "original_user_id": row["original_user_id"]
+            }
+        
+        # Enhance reposts with original author info
+        for idx in repost_indices:
+            original_post_id = posts[idx]["original_post_id"]
+            if original_post_id in original_info:
+                posts[idx].update(original_info[original_post_id])
+    
+    return posts
+
+
 async def get_home_timeline(user_id: UUID, limit: int = 20, before_id: Optional[UUID] = None) -> list[Dict]:
     """
     Get home timeline for a user
@@ -30,6 +83,9 @@ async def get_home_timeline(user_id: UUID, limit: int = 20, before_id: Optional[
 
     # If not in cache or using pagination, get from database
     posts = await get_user_timeline_posts(user_id, limit, before_id)
+    
+    # Enhance reposts with original post information
+    posts = await enhance_reposts_with_original_info(posts)
 
     # Cache the result if this is the first page
     if before_id is None:

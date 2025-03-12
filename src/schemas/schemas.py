@@ -82,6 +82,9 @@ class PostResponse(BaseModel):
     repost_count: int
     is_repost: bool = False
     original_post_id: Optional[UUID] = None
+    original_user_id: Optional[UUID] = None  # For reposts, the original post's author ID
+    original_username: Optional[str] = None  # For reposts, the original post's author username
+    original_profile_picture_url: Optional[str] = None  # For reposts, the original author's profile pic
     parent_post_id: Optional[UUID] = None  # For comments, the post they're replying to
     is_comment: bool = False
     liked_by_user: Optional[bool] = None
@@ -101,6 +104,44 @@ class FeedResponse(BaseModel):
 class TrendingTopic(BaseModel):
     name: str
     post_count: int
+
+
+# Message Schemas
+class MessageCreate(BaseModel):
+    recipient_id: UUID
+    content: str
+    
+    @validator('content')
+    def validate_content_length(cls, v):
+        if not v or len(v) > 2000:
+            raise ValueError('Message content must be between 1 and 2000 characters')
+        return v
+
+
+class MessageResponse(BaseModel):
+    id: UUID
+    sender_id: UUID
+    sender_username: str
+    sender_profile_picture_url: Optional[str] = None
+    recipient_id: UUID
+    recipient_username: str
+    recipient_profile_picture_url: Optional[str] = None
+    content: str
+    is_read: bool
+    created_at: datetime
+
+
+class ConversationResponse(BaseModel):
+    user_id: UUID
+    username: str
+    profile_picture_url: Optional[str] = None
+    last_message: Optional[MessageResponse] = None
+    unread_count: int
+    created_at: datetime
+
+
+class ConversationListResponse(BaseModel):
+    conversations: list[ConversationResponse]
 
 
 # Redis Data Models
@@ -153,6 +194,9 @@ class RedisPost(RedisModel):
     repost_count: int = 0
     is_repost: bool = False
     original_post_id: Optional[Union[UUID, str]] = None
+    original_user_id: Optional[Union[UUID, str]] = None  # For reposts, the original post's author ID
+    original_username: Optional[str] = None  # For reposts, the original post's author username
+    original_profile_picture_url: Optional[str] = None  # For reposts, the original author's profile pic
     parent_post_id: Optional[Union[UUID, str]] = None  # For comments
     is_comment: bool = False
     created_at: Union[datetime, str]
@@ -196,6 +240,9 @@ class RedisPost(RedisModel):
             repost_count=self.repost_count,
             is_repost=self.is_repost,
             original_post_id=self.original_post_id,
+            original_user_id=self.original_user_id,
+            original_username=self.original_username,
+            original_profile_picture_url=self.original_profile_picture_url,
             parent_post_id=self.parent_post_id,
             is_comment=self.is_comment,
             archived_urls=self.archived_urls,
@@ -219,6 +266,9 @@ class RedisPost(RedisModel):
             repost_count=post.repost_count,
             is_repost=post.is_repost,
             original_post_id=post.original_post_id,
+            original_user_id=post.original_user_id,
+            original_username=post.original_username,
+            original_profile_picture_url=post.original_profile_picture_url,
             parent_post_id=post.parent_post_id,
             is_comment=post.is_comment,
             archived_urls=post.archived_urls,

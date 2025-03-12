@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.core.auth import get_current_user
+from src.core.db import pool
 from src.models.models import User
 from src.schemas.schemas import (
     CommentCreate,
@@ -180,14 +181,61 @@ async def repost_post(
     - **PostResponse**: The created repost
     
     Raises:
+    - **400 Bad Request**: If trying to repost own post or already reposted
     - **401 Unauthorized**: If not authenticated
-    - **404 Not Found**: If the original post does not exist
+    - **404 Not Found**: If the original post does not exist or is a comment
     """
+    # First, check if the post exists and get basic info about it
+    async with pool.acquire() as conn:
+        post_info = await conn.fetchrow(
+            """
+            SELECT user_id, is_comment 
+            FROM posts 
+            WHERE id = $1
+            """, 
+            post_id
+        )
+        
+        if not post_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Post not found",
+            )
+            
+        if post_info["is_comment"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot repost a comment",
+            )
+            
+        if post_info["user_id"] == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot repost your own post",
+            )
+            
+        # Check if already reposted
+        existing_repost = await conn.fetchval(
+            """
+            SELECT 1 FROM posts 
+            WHERE user_id = $1 AND original_post_id = $2 AND is_repost = TRUE
+            """,
+            current_user.id,
+            post_id
+        )
+        
+        if existing_repost:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You have already reposted this post",
+            )
+    
+    # Now attempt to create the repost
     reposted = await repost(current_user.id, post_id)
     if not reposted:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Post not found",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create repost",
         )
     return reposted
 

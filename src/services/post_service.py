@@ -339,10 +339,14 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Check if original post exists
+            # Check if original post exists and get author info
             original_post = await conn.fetchrow(
                 """
-                SELECT id, title, url, content, media_urls, is_comment FROM posts WHERE id = $1
+                SELECT p.id, p.user_id, p.title, p.url, p.content, p.media_urls, p.is_comment,
+                       u.username as original_username, u.profile_picture_url as original_profile_picture_url
+                FROM posts p
+                JOIN users u ON p.user_id = u.id
+                WHERE p.id = $1
             """,
                 original_post_id,
             )
@@ -353,8 +357,27 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
             # Cannot repost a comment
             if original_post["is_comment"]:
                 return None
+                
+            # Cannot repost your own post
+            if original_post["user_id"] == user_id:
+                return None
+                
+            # Check if already reposted by this user
+            existing_repost = await conn.fetchval(
+                """
+                SELECT 1 FROM posts 
+                WHERE user_id = $1 AND original_post_id = $2 AND is_repost = TRUE
+                """,
+                user_id,
+                original_post_id
+            )
+            
+            if existing_repost:
+                return None
 
             # Create repost record - keep the same structure as the original post
+            # We need to add original_user_id, original_username, and original_profile_picture_url
+            # But the database schema doesn't have these columns yet, so we'll include them in the response later
             await conn.execute(
                 """
                 INSERT INTO posts (
@@ -407,6 +430,11 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
     result = dict(repost)
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
+        
+    # Add original author info to result
+    result["original_user_id"] = original_post["user_id"]
+    result["original_username"] = original_post["original_username"]
+    result["original_profile_picture_url"] = original_post["original_profile_picture_url"]
 
     # Use fanout-on-write to push the repost to all followers' timelines in Redis
     full_post = {
@@ -422,6 +450,9 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
         "is_repost": True,
         "is_comment": False,
         "original_post_id": original_post_id,
+        "original_user_id": original_post["user_id"],
+        "original_username": original_post["original_username"],
+        "original_profile_picture_url": original_post["original_profile_picture_url"],
         "parent_post_id": None,
         "created_at": now.isoformat(),
         "username": result["username"],
