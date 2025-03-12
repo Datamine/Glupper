@@ -70,18 +70,28 @@ async def _create_tables():
             CREATE TABLE IF NOT EXISTS posts (
                 id UUID PRIMARY KEY,
                 user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                content TEXT NOT NULL,
+                title TEXT,
+                url TEXT,
+                content TEXT,
                 media_urls TEXT[] DEFAULT '{}',
                 like_count INTEGER DEFAULT 0,
                 comment_count INTEGER DEFAULT 0,
                 repost_count INTEGER DEFAULT 0,
                 is_repost BOOLEAN DEFAULT FALSE,
+                is_comment BOOLEAN DEFAULT FALSE,
                 original_post_id UUID REFERENCES posts(id),
+                parent_post_id UUID REFERENCES posts(id),
                 created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
+                updated_at TIMESTAMP NOT NULL,
+                CONSTRAINT post_content_check CHECK (
+                    (is_comment = TRUE AND content IS NOT NULL AND title IS NULL AND url IS NULL) OR
+                    (is_comment = FALSE AND title IS NOT NULL AND url IS NOT NULL AND content IS NULL) OR
+                    (is_repost = TRUE)
+                )
             );
             CREATE INDEX IF NOT EXISTS idx_posts_user_id ON posts(user_id);
             CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_posts_parent_id ON posts(parent_post_id);
         """)
 
         # Likes table
@@ -145,14 +155,15 @@ async def get_user_timeline_posts(
             SELECT followee_id FROM follows WHERE follower_id = $1
         )
         SELECT
-            p.id, p.content, p.media_urls, p.like_count, p.comment_count,
-            p.repost_count, p.is_repost, p.original_post_id, p.created_at,
+            p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+            p.repost_count, p.is_repost, p.is_comment, p.original_post_id, p.parent_post_id, p.created_at,
             u.id as user_id, u.username, u.profile_picture_url,
             EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = $1) as liked_by_user
         FROM posts p
         JOIN users u ON p.user_id = u.id
-        WHERE p.user_id IN (SELECT followee_id FROM followed_users)
-           OR p.user_id = $1
+        WHERE (p.user_id IN (SELECT followee_id FROM followed_users)
+           OR p.user_id = $1)
+           AND p.is_comment = FALSE
         """
 
         params = [user_id, limit]
@@ -206,8 +217,8 @@ async def get_post_with_comments(post_id: UUID, limit: int = 20, offset: int = 0
         # Get the post with user info
         post_query = """
         SELECT
-            p.id, p.content, p.media_urls, p.like_count, p.comment_count,
-            p.repost_count, p.is_repost, p.original_post_id, p.created_at,
+            p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+            p.repost_count, p.is_repost, p.is_comment, p.original_post_id, p.parent_post_id, p.created_at,
             u.id as user_id, u.username, u.profile_picture_url
         FROM posts p
         JOIN users u ON p.user_id = u.id
@@ -238,12 +249,12 @@ async def get_post_with_comments(post_id: UUID, limit: int = 20, offset: int = 0
         # Get comments for this post
         comments_query = """
         SELECT
-            p.id, p.content, p.media_urls, p.like_count, p.comment_count,
-            p.created_at,
+            p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+            p.repost_count, p.is_repost, p.is_comment, p.original_post_id, p.parent_post_id, p.created_at,
             u.id as user_id, u.username, u.profile_picture_url
         FROM posts p
         JOIN users u ON p.user_id = u.id
-        WHERE p.original_post_id = $1
+        WHERE p.parent_post_id = $1 AND p.is_comment = TRUE
         ORDER BY p.created_at DESC
         LIMIT $2 OFFSET $3
         """

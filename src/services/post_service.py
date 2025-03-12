@@ -6,15 +6,14 @@ from src.core.cache import (
     cache_post,
     get_cached_post,
     invalidate_post_cache,
-    invalidate_user_timeline,
 )
 from src.core.db import get_post_with_comments, pool
 from src.services.archive_service import get_archived_urls_for_post, process_post_urls
 from src.services.feed_service import push_post_to_timelines
 
 
-async def create_post(user_id: UUID, content: str, media_urls: Optional[list[str]] = None) -> dict:
-    """Create a new post"""
+async def create_post(user_id: UUID, title: str, url: str, media_urls: Optional[list[str]] = None) -> dict:
+    """Create a new post with title and URL"""
     post_id = uuid4()
     now = datetime.now()
 
@@ -25,23 +24,26 @@ async def create_post(user_id: UUID, content: str, media_urls: Optional[list[str
         await conn.execute(
             """
             INSERT INTO posts (
-                id, user_id, content, media_urls, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6)
+                id, user_id, title, url, content, media_urls, created_at, updated_at, is_comment
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
             post_id,
             user_id,
-            content,
+            title,
+            url,
+            None,  # content is null for top-level posts
             media_urls,
             now,
             now,
+            False,
         )
 
         # Get the complete post with user info
         post = await conn.fetchrow(
             """
             SELECT
-                p.id, p.content, p.media_urls, p.like_count, p.comment_count,
-                p.repost_count, p.is_repost, p.original_post_id, p.created_at,
+                p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+                p.repost_count, p.is_repost, p.original_post_id, p.parent_post_id, p.is_comment, p.created_at,
                 u.username, u.profile_picture_url
             FROM posts p
             JOIN users u ON p.user_id = u.id
@@ -55,31 +57,39 @@ async def create_post(user_id: UUID, content: str, media_urls: Optional[list[str
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
 
-    # Archive URLs in background (don't await)
-    # We don't want to block the post creation on archiving
-    # This task will run in the background
-    process_task = process_post_urls(
+    # Archive URL immediately for direct URL posts
+    # Makes sure the URL gets archived right away
+    await process_post_urls(
         post_id=post_id,
         user_id=user_id,
-        content=content,
+        content=url,  # for top-level posts, primarily archive the URL
         media_urls=media_urls or [],
     )
+    
+    # Get the archived URL to include in the response
+    archived_urls = await get_archived_urls_for_post(post_id)
+    if archived_urls:
+        result["archived_urls"] = archived_urls
 
     # Use fanout-on-write to push the post to all followers' timelines in Redis
     # This is a much more efficient approach than invalidating caches
     full_post = {
         "id": post_id,
         "user_id": user_id,
-        "content": content,
+        "title": title,
+        "url": url,
+        "content": None,
         "media_urls": media_urls or [],
         "like_count": 0,
         "comment_count": 0,
         "repost_count": 0,
         "is_repost": False,
+        "is_comment": False,
+        "parent_post_id": None,
         "original_post_id": None,
         "created_at": now.isoformat(),
         "username": result["username"],
-        "profile_picture_url": result["profile_picture_url"]
+        "profile_picture_url": result["profile_picture_url"],
     }
     
     # Push to Redis in the background (don't await)
@@ -131,21 +141,24 @@ async def create_comment(
             if not post_exists:
                 return None
 
-            # Create the comment as a post with original_post_id set
+            # Create the comment as a post with parent_post_id set and is_comment=True
             await conn.execute(
                 """
                 INSERT INTO posts (
-                    id, user_id, content, media_urls,
-                    original_post_id, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    id, user_id, title, url, content, media_urls,
+                    parent_post_id, created_at, updated_at, is_comment
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
                 comment_id,
                 user_id,
+                None,  # title is null for comments
+                None,  # url is null for comments
                 content,
                 media_urls,
                 post_id,
                 now,
                 now,
+                True,
             )
 
             # Increment comment count on original post
@@ -163,8 +176,8 @@ async def create_comment(
             comment = await conn.fetchrow(
                 """
                 SELECT
-                    p.id, p.content, p.media_urls, p.like_count, p.comment_count,
-                    p.repost_count, p.is_repost, p.original_post_id, p.created_at,
+                    p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+                    p.repost_count, p.is_repost, p.original_post_id, p.parent_post_id, p.is_comment, p.created_at,
                     u.username, u.profile_picture_url
                 FROM posts p
                 JOIN users u ON p.user_id = u.id
@@ -296,28 +309,35 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
             # Check if original post exists
             original_post = await conn.fetchrow(
                 """
-                SELECT id, content, media_urls FROM posts WHERE id = $1
+                SELECT id, title, url, content, media_urls, is_comment FROM posts WHERE id = $1
             """,
                 original_post_id,
             )
 
             if not original_post:
                 return None
+                
+            # Cannot repost a comment
+            if original_post["is_comment"]:
+                return None
 
-            # Create repost record
+            # Create repost record - keep the same structure as the original post
             await conn.execute(
                 """
                 INSERT INTO posts (
-                    id, user_id, content, media_urls,
-                    is_repost, original_post_id, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    id, user_id, title, url, content, media_urls,
+                    is_repost, original_post_id, is_comment, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """,
                 repost_id,
                 user_id,
+                original_post["title"],
+                original_post["url"],
                 original_post["content"],
                 original_post["media_urls"],
                 True,
                 original_post_id,
+                False,
                 now,
                 now,
             )
@@ -337,8 +357,8 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
             repost = await conn.fetchrow(
                 """
                 SELECT
-                    p.id, p.content, p.media_urls, p.like_count, p.comment_count,
-                    p.repost_count, p.is_repost, p.original_post_id, p.created_at,
+                    p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+                    p.repost_count, p.is_repost, p.is_comment, p.original_post_id, p.parent_post_id, p.created_at,
                     u.username, u.profile_picture_url
                 FROM posts p
                 JOIN users u ON p.user_id = u.id
@@ -350,44 +370,40 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
     # Invalidate cache for the original post
     await invalidate_post_cache(original_post_id)
 
-    # Use fanout-on-write to push the repost to all followers' timelines in Redis
-    full_post = {
-        "id": repost_id,
-        "user_id": user_id,
-        "content": result["content"],
-        "media_urls": result["media_urls"],
-        "like_count": 0,
-        "comment_count": 0,
-        "repost_count": 0,
-        "is_repost": True,
-        "original_post_id": original_post_id,
-        "created_at": now.isoformat(),
-        "username": result["username"],
-        "profile_picture_url": result["profile_picture_url"]
-    }
-    
-    # Push to Redis in the background (don't await)
-    push_task = push_post_to_timelines(full_post, user_id)
-
     # Construct response
     result = dict(repost)
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
 
-    # We need to get the content and media_urls for the archive process
-    content = original_post["content"]
-    media_urls = original_post["media_urls"]
-    if media_urls is not None:
-        media_urls = list(media_urls)
-    else:
-        media_urls = []
+    # Use fanout-on-write to push the repost to all followers' timelines in Redis
+    full_post = {
+        "id": repost_id,
+        "user_id": user_id,
+        "title": result["title"],
+        "url": result["url"],
+        "content": result["content"],
+        "media_urls": result["media_urls"] or [],
+        "like_count": 0,
+        "comment_count": 0,
+        "repost_count": 0,
+        "is_repost": True,
+        "is_comment": False,
+        "original_post_id": original_post_id,
+        "parent_post_id": None,
+        "created_at": now.isoformat(),
+        "username": result["username"],
+        "profile_picture_url": result["profile_picture_url"],
+    }
+    
+    # Push to Redis in the background (don't await)
+    push_task = push_post_to_timelines(full_post, user_id)
 
     # Archive URLs in background (don't await)
     process_task = process_post_urls(
         post_id=repost_id,
         user_id=user_id,
-        content=content,
-        media_urls=media_urls,
+        content=original_post["url"] or original_post["content"],
+        media_urls=original_post["media_urls"] or [],
     )
 
     return result
@@ -399,12 +415,12 @@ async def get_user_posts(user_id: UUID, limit: int = 20, offset: int = 0) -> lis
         rows = await conn.fetch(
             """
             SELECT
-                p.id, p.content, p.media_urls, p.like_count, p.comment_count,
-                p.repost_count, p.is_repost, p.original_post_id, p.created_at,
+                p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+                p.repost_count, p.is_repost, p.is_comment, p.original_post_id, p.parent_post_id, p.created_at,
                 u.username, u.profile_picture_url
             FROM posts p
             JOIN users u ON p.user_id = u.id
-            WHERE p.user_id = $1 AND p.original_post_id IS NULL
+            WHERE p.user_id = $1 AND p.is_comment = FALSE 
             ORDER BY p.created_at DESC
             LIMIT $2 OFFSET $3
         """,

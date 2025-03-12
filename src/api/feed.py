@@ -1,8 +1,8 @@
 import base64
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 
 from src.core.auth import get_current_user
 from src.models.models import User
@@ -13,26 +13,37 @@ from src.schemas.schemas import (
 )
 from src.services.feed_service import (
     get_explore_feed,
-    get_home_timeline,
     get_timeline_from_redis,
     get_trending_posts,
     get_trending_topics,
 )
 
-router = APIRouter(prefix="/feed", tags=["feed"])
+router = APIRouter(prefix="/api/v1/feed", tags=["feed"])
 
 
-@router.get("/home")
+@router.get("/home", status_code=status.HTTP_200_OK)
 async def home_timeline(
     cursor: Optional[str] = None,
     limit: int = Query(20, ge=1, le=50),
-    current_user: User = Depends(get_current_user),
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedResponse:
     """
-    Get user's home timeline
-
-    Uses cursor-based pagination for optimal performance.
-    The cursor is a base64 encoded post ID used as a starting point.
+    Get the authenticated user's home timeline.
+    
+    Parameters:
+    - **cursor**: Optional base64 encoded pagination cursor
+    - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
+    - **current_user**: User object from token authentication dependency
+    
+    Returns:
+    - **FeedResponse**: List of posts and pagination cursor
+    
+    Raises:
+    - **401 Unauthorized**: If not authenticated
+    
+    Notes:
+    - Uses cursor-based pagination for optimal performance
+    - The cursor is a base64 encoded post ID used as a starting point
     """
     # Decode cursor if provided
     before_id = None
@@ -70,16 +81,29 @@ async def home_timeline(
     }
 
 
-@router.get("/explore")
+@router.get("/explore", status_code=status.HTTP_200_OK)
 async def explore_feed(
     offset: int = 0,
     limit: int = Query(20, ge=1, le=50),
-    current_user: User = Depends(get_current_user),
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedResponse:
     """
-    Get explore/discover feed
-
-    Shows popular content from users that the current user doesn't follow
+    Get discover feed with popular content from non-followed users.
+    
+    Parameters:
+    - **offset**: Pagination offset (default: 0)
+    - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
+    - **current_user**: User object from token authentication dependency
+    
+    Returns:
+    - **FeedResponse**: List of posts and pagination information
+    
+    Raises:
+    - **401 Unauthorized**: If not authenticated
+    
+    Notes:
+    - Shows popular content from users that the current user doesn't follow
+    - Uses offset-based pagination
     """
     posts = await get_explore_feed(current_user.id, limit, offset)
 
@@ -92,17 +116,30 @@ async def explore_feed(
     }
 
 
-@router.get("/trending/topics")
+@router.get("/trending/topics", status_code=status.HTTP_200_OK)
 async def trending_topics() -> list[TrendingTopic]:
-    """Get trending topics/hashtags"""
+    """
+    Get trending topics and hashtags.
+    
+    Returns:
+    - **list[TrendingTopic]**: List of trending topics with their post counts
+    """
     topics = await get_trending_topics()
     return topics
 
 
-@router.get("/trending/posts")
+@router.get("/trending/posts", status_code=status.HTTP_200_OK)
 async def trending_posts(
     limit: int = Query(20, ge=1, le=50),
 ) -> list[PostResponse]:
-    """Get trending posts"""
+    """
+    Get trending posts across the platform.
+    
+    Parameters:
+    - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
+    
+    Returns:
+    - **list[PostResponse]**: List of trending posts sorted by popularity
+    """
     posts = await get_trending_posts(limit)
     return posts

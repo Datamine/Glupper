@@ -1,10 +1,11 @@
 import json
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import redis.asyncio as redis
 
 from src.config_secrets import REDIS_URL
+from src.schemas.schemas import RedisPost, RedisTimeline, RedisTrending
 
 # Redis connection
 redis_client: Optional[redis.Redis] = None
@@ -35,49 +36,79 @@ def _serialize_uuid(obj: Any) -> Any:
 
 
 # Timeline cache functions
-async def cache_user_timeline(user_id: UUID, posts: list[dict[str, Any]], expiry: int = 300):
-    """Cache a user's timeline posts in Redis for high-performance reads"""
+async def cache_user_timeline(user_id: UUID, posts: List[Dict[str, Any]], expiry: int = 300):
+    """Cache a user's timeline posts in Redis for high-performance reads using RedisTimeline model"""
     if not redis_client:
         return
 
     key = f"timeline:{user_id}"
-    serialized_posts = _serialize_uuid(posts)
-    await redis_client.setex(key, expiry, json.dumps(serialized_posts))
+    
+    # Convert posts to RedisPost objects
+    redis_posts = [RedisPost.from_dict(post) for post in posts]
+    
+    # Create a RedisTimeline object
+    timeline = RedisTimeline(
+        user_id=user_id,
+        posts=redis_posts,
+    )
+    
+    # Store the serialized timeline
+    await redis_client.setex(key, expiry, timeline.to_redis())
 
 
-async def get_cached_timeline(user_id: UUID) -> Optional[list[dict[str, Any]]]:
-    """Get cached timeline posts for a user"""
+async def get_cached_timeline(user_id: UUID) -> Optional[List[Dict[str, Any]]]:
+    """Get cached timeline posts for a user using RedisTimeline model"""
     if not redis_client:
         return None
 
     key = f"timeline:{user_id}"
     cached = await redis_client.get(key)
-    if cached:
-        return json.loads(cached)
-    return None
+    
+    if not cached:
+        return None
+        
+    # Parse the cached data into a RedisTimeline object
+    timeline = RedisTimeline.from_redis(cached)
+    
+    if not timeline:
+        return None
+        
+    # Convert to API response format
+    return [post.dict() for post in timeline.posts]
 
 
 # Post cache functions
-async def cache_post(post_id: UUID, post_data: dict[str, Any], expiry: int = 300):
-    """Cache post data in Redis"""
+async def cache_post(post_id: UUID, post_data: Dict[str, Any], expiry: int = 300):
+    """Cache post data in Redis using RedisPost model"""
     if not redis_client:
         return
 
     key = f"post:{post_id}"
-    serialized_post = _serialize_uuid(post_data)
-    await redis_client.setex(key, expiry, json.dumps(serialized_post))
+    
+    # Convert to RedisPost and serialize
+    redis_post = RedisPost.from_dict(post_data)
+    await redis_client.setex(key, expiry, redis_post.to_redis())
 
 
-async def get_cached_post(post_id: UUID) -> Optional[dict[str, Any]]:
-    """Get cached post data"""
+async def get_cached_post(post_id: UUID) -> Optional[Dict[str, Any]]:
+    """Get cached post data using RedisPost model"""
     if not redis_client:
         return None
 
     key = f"post:{post_id}"
     cached = await redis_client.get(key)
-    if cached:
-        return json.loads(cached)
-    return None
+    
+    if not cached:
+        return None
+        
+    # Parse the cached data into a RedisPost object
+    post = RedisPost.from_redis(cached)
+    
+    if not post:
+        return None
+        
+    # Convert to dictionary for API response
+    return post.dict()
 
 
 # User profile cache functions
@@ -104,26 +135,44 @@ async def get_cached_user_profile(user_id: UUID) -> Optional[dict[str, Any]]:
 
 
 # Trending posts cache
-async def cache_trending_posts(posts: list[dict[str, Any]], expiry: int = 300):
-    """Cache trending posts in Redis"""
+async def cache_trending_posts(posts: List[Dict[str, Any]], expiry: int = 300):
+    """Cache trending posts in Redis using RedisTrending model"""
     if not redis_client:
         return
 
     key = "trending:posts"
-    serialized_posts = _serialize_uuid(posts)
-    await redis_client.setex(key, expiry, json.dumps(serialized_posts))
+    
+    # Convert posts to RedisPost objects
+    redis_posts = [RedisPost.from_dict(post) for post in posts]
+    
+    # Create a RedisTrending object
+    trending = RedisTrending(
+        posts=redis_posts,
+    )
+    
+    # Store the serialized trending posts
+    await redis_client.setex(key, expiry, trending.to_redis())
 
 
-async def get_cached_trending_posts() -> Optional[list[dict[str, Any]]]:
-    """Get cached trending posts"""
+async def get_cached_trending_posts() -> Optional[List[Dict[str, Any]]]:
+    """Get cached trending posts using RedisTrending model"""
     if not redis_client:
         return None
 
     key = "trending:posts"
     cached = await redis_client.get(key)
-    if cached:
-        return json.loads(cached)
-    return None
+    
+    if not cached:
+        return None
+        
+    # Parse the cached data into a RedisTrending object
+    trending = RedisTrending.from_redis(cached)
+    
+    if not trending:
+        return None
+        
+    # Convert to API response format
+    return [post.dict() for post in trending.posts]
 
 
 # Cache invalidation functions

@@ -46,3 +46,13 @@ async def shutdown_event():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.get("/api/version")
+async def api_version():
+    """API version information"""
+    return {
+        "version": "1.0.0",
+        "name": "Glupper API",
+        "endpoints": "/api/v1"
+    }

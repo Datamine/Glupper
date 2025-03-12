@@ -1,4 +1,3 @@
-import json
 import random
 from typing import Dict, List, Optional
 from uuid import UUID
@@ -44,6 +43,7 @@ async def push_post_to_timelines(post: Dict, author_id: UUID):
     Push a new post to followers' timelines in Redis
     
     This implements a fanout-on-write approach for high-performance feeds
+    using proper serialization via Pydantic models
     """
     if not redis_client:
         return
@@ -62,9 +62,10 @@ async def push_post_to_timelines(post: Dict, author_id: UUID):
     if not follower_ids:
         return
         
-    # Prepare the post for caching
-    from src.core.cache import _serialize_uuid
-    serialized_post = json.dumps(_serialize_uuid(post))
+    # Convert to RedisPost for proper serialization
+    from src.schemas.schemas import RedisPost
+    redis_post = RedisPost.from_dict(post)
+    serialized_post = redis_post.to_redis()
     
     # Push to each follower's timeline
     pipe = redis_client.pipeline()
@@ -87,6 +88,7 @@ async def push_post_to_timelines(post: Dict, author_id: UUID):
 async def get_timeline_from_redis(user_id: UUID, limit: int = 20, start_idx: int = 0) -> List[Dict]:
     """
     Get timeline directly from Redis for maximum performance
+    using proper deserialization via Pydantic models
     """
     if not redis_client:
         return await get_home_timeline(user_id, limit)
@@ -103,18 +105,33 @@ async def get_timeline_from_redis(user_id: UUID, limit: int = 20, start_idx: int
         
         # Store in Redis for future requests
         if posts:
-            from src.core.cache import _serialize_uuid
+            from src.schemas.schemas import RedisPost
             pipe = redis_client.pipeline()
             for post in posts:
-                serialized_post = json.dumps(_serialize_uuid(post))
+                redis_post = RedisPost.from_dict(post)
+                serialized_post = redis_post.to_redis()
                 pipe.rpush(timeline_key, serialized_post)
             pipe.expire(timeline_key, 432000)  # 5 days expiry
             await pipe.execute()
         
         return posts
     
-    # Parse JSON data for each post
-    return [json.loads(post_json) for post_json in posts_json]
+    # Parse and deserialize posts using our Pydantic models
+    from src.schemas.schemas import RedisPost
+    parsed_posts = []
+    
+    for post_json in posts_json:
+        try:
+            # Use our RedisPost model to properly deserialize the data
+            redis_post = RedisPost.from_redis(post_json)
+            if redis_post:
+                parsed_posts.append(redis_post.dict())
+        except Exception as e:
+            import logging
+            logging.error(f"Error parsing post from Redis: {e}")
+            continue
+    
+    return parsed_posts
 
 
 async def get_explore_feed(user_id: UUID, limit: int = 20, offset: int = 0) -> list[Dict]:
