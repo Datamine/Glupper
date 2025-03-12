@@ -23,10 +23,10 @@ router = APIRouter(prefix="/api/v1/feed", tags=["feed"])
 
 @router.get("/home", status_code=status.HTTP_200_OK)
 async def home_timeline(
+    current_user: Annotated[User, Depends(get_current_user)],
     cursor: Optional[str] = None,
     limit: int = Query(20, ge=1, le=50),
     feed_type: Literal["chronological", "for_you"] = "chronological",
-    current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedResponse:
     """
     Get the authenticated user's home timeline.
@@ -55,7 +55,7 @@ async def home_timeline(
         try:
             cursor_bytes = base64.b64decode(cursor.encode("utf-8"))
             before_id = UUID(cursor_bytes.decode("utf-8"))
-        except:
+        except (ValueError, TypeError):
             pass
 
     # Get timeline posts directly from Redis for maximum performance
@@ -67,7 +67,7 @@ async def home_timeline(
         try:
             # If we're using UUIDs as cursors, we'll treat it as an offset instead
             start_idx = int(str(before_id))
-        except:
+        except ValueError:
             pass
 
     # Pass the feed_type to the service layer
@@ -94,9 +94,9 @@ async def home_timeline(
 
 @router.get("/explore", status_code=status.HTTP_200_OK)
 async def explore_feed(
+    current_user: Annotated[User, Depends(get_current_user)],
     offset: int = 0,
     limit: int = Query(20, ge=1, le=50),
-    current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedResponse:
     """
     Get discover feed with popular content from non-followed users.

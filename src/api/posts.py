@@ -266,9 +266,9 @@ async def get_posts_by_user(
 
 @router.get("/likes", status_code=status.HTTP_200_OK)
 async def get_liked_posts(
+    current_user: Annotated[User, Depends(get_current_user)],
     cursor: Optional[str] = None,
     limit: int = Query(20, ge=1, le=50),
-    current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedResponse:
     """
     Get posts that the authenticated user has liked.
@@ -295,7 +295,7 @@ async def get_liked_posts(
         try:
             cursor_bytes = base64.b64decode(cursor.encode("utf-8"))
             cursor_uuid = UUID(cursor_bytes.decode("utf-8"))
-        except:
+        except (ValueError, TypeError):
             pass
 
     # Get liked posts from the service layer

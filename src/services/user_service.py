@@ -8,12 +8,55 @@ from src.core.cache import (
     get_cached_user_profile,
     invalidate_user_profile_cache,
 )
-from src.core.db import pool
+from src.core.db import pool, init_db
 from src.models.models import User
+
+
+async def ensure_db_initialized():
+    """Ensure database connection pool is initialized"""
+    global pool
+    if pool is None:
+        import logging
+        logging.info("Database pool is None, initializing...")
+        try:
+            result = await init_db()
+            if result is None:
+                # Check if the PostgreSQL service is running
+                import asyncio
+                try:
+                    from src.config_secrets import DATABASE_URL
+                    # Parse the connection string to get host and port
+                    parts = DATABASE_URL.split(":")
+                    if len(parts) >= 3:
+                        host = parts[2].split("@")[-1].split("/")[0]
+                        port = 5432  # Default PostgreSQL port
+                        
+                        # Try to connect to the host/port to see if PostgreSQL is running
+                        import socket
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(1)
+                        if sock.connect_ex((host, port)) == 0:
+                            error_msg = f"PostgreSQL is running at {host}:{port}, but connection failed. Check credentials and database name."
+                        else:
+                            error_msg = f"PostgreSQL is not running at {host}:{port}. Start the database service."
+                        sock.close()
+                    else:
+                        error_msg = "Invalid DATABASE_URL format."
+                except Exception as e:
+                    error_msg = f"Error checking database status: {str(e)}"
+                
+                raise RuntimeError(f"Database connection pool could not be initialized. {error_msg}")
+        except Exception as e:
+            logging.error(f"Error in ensure_db_initialized: {str(e)}")
+            raise
+    
+    return pool
 
 
 async def create_user(username: str, email: str, password: str, bio: Optional[str] = None) -> User:
     """Create a new user"""
+    await ensure_db_initialized()
+    
     user_id = uuid4()
     password_hash = get_password_hash(password)
     now = datetime.now(UTC)
@@ -51,6 +94,8 @@ async def get_user_by_id(user_id: UUID) -> Optional[dict]:
     if cached_user:
         return cached_user
 
+    await ensure_db_initialized()
+
     # If not in cache, get from database
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -77,6 +122,8 @@ async def get_user_by_id(user_id: UUID) -> Optional[dict]:
 
 async def get_user_by_username(username: str) -> Optional[dict]:
     """Get user by username"""
+    await ensure_db_initialized()
+        
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -103,6 +150,8 @@ async def update_user_profile(user_id: UUID, update_data: dict) -> Optional[dict
     if not update_fields:
         return await get_user_by_id(user_id)
 
+    await ensure_db_initialized()
+    
     # Build a safer query for the update
     now = datetime.now(UTC)
 
@@ -138,6 +187,8 @@ async def update_user_profile(user_id: UUID, update_data: dict) -> Optional[dict
 
 async def get_user_followers(user_id: UUID, limit: int = 20, offset: int = 0) -> list[dict]:
     """Get users following this user"""
+    await ensure_db_initialized()
+    
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -160,6 +211,8 @@ async def get_user_followers(user_id: UUID, limit: int = 20, offset: int = 0) ->
 
 async def get_user_following(user_id: UUID, limit: int = 20, offset: int = 0) -> list[dict]:
     """Get users this user is following"""
+    await ensure_db_initialized()
+    
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -184,6 +237,8 @@ async def follow_user(follower_id: UUID, followee_id: UUID) -> bool:
     """Follow a user"""
     if follower_id == followee_id:
         return False
+        
+    await ensure_db_initialized()
 
     async with pool.acquire() as conn, conn.transaction():
         # Check if already following
@@ -243,6 +298,8 @@ async def unfollow_user(follower_id: UUID, followee_id: UUID) -> bool:
     """Unfollow a user"""
     if follower_id == followee_id:
         return False
+        
+    await ensure_db_initialized()
 
     async with pool.acquire() as conn, conn.transaction():
         # Check if following
@@ -299,6 +356,8 @@ async def mute_user(muter_id: UUID, muted_id: UUID) -> bool:
     """Mute a user"""
     if muter_id == muted_id:
         return False
+        
+    await ensure_db_initialized()
 
     async with pool.acquire() as conn, conn.transaction():
         # Check if already muted
@@ -335,6 +394,8 @@ async def unmute_user(muter_id: UUID, muted_id: UUID) -> bool:
     """Unmute a user"""
     if muter_id == muted_id:
         return False
+        
+    await ensure_db_initialized()
 
     async with pool.acquire() as conn, conn.transaction():
         # Check if muted
@@ -365,6 +426,8 @@ async def unmute_user(muter_id: UUID, muted_id: UUID) -> bool:
 
 async def get_muted_users(user_id: UUID, limit: int = 50, offset: int = 0) -> list[dict]:
     """Get users that this user has muted"""
+    await ensure_db_initialized()
+    
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -387,6 +450,8 @@ async def get_muted_users(user_id: UUID, limit: int = 50, offset: int = 0) -> li
 
 async def is_user_muted(muter_id: UUID, muted_id: UUID) -> bool:
     """Check if a user is muted by another user"""
+    await ensure_db_initialized()
+    
     async with pool.acquire() as conn:
         exists = await conn.fetchval(
             """

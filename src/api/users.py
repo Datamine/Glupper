@@ -290,9 +290,9 @@ async def unmute(
 
 @router.get("/me/muted", status_code=status.HTTP_200_OK)
 async def get_muted(
+    current_user: Annotated[User, Depends(get_current_user)],
     limit: int = 50,
     offset: int = 0,
-    current_user: Annotated[User, Depends(get_current_user)],
 ) -> MutedUsersResponse:
     """
     Get list of users that the current user has muted.

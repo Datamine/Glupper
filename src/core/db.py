@@ -13,14 +13,21 @@ pool: Optional[Pool] = None
 async def init_db():
     """Initialize database connection pool"""
     global pool
-    pool = await asyncpg.create_pool(
-        DATABASE_URL,
-        min_size=10,
-        max_size=100,  # High connection count for performance
-    )
-
-    # Initialize database schema
-    await _create_tables()
+    try:
+        pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=5,
+            max_size=20,  # Reduced connection count for stability
+        )
+        
+        # Initialize database schema
+        if pool:
+            await _create_tables()
+        return pool
+    except Exception as e:
+        import logging
+        logging.error(f"Database connection error: {str(e)}")
+        return None
 
 
 async def close_db():

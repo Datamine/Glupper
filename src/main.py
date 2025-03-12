@@ -33,8 +33,27 @@ app.include_router(messages.router)
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    await init_db()
-    await init_cache()
+    import logging
+    
+    # Setup better logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Initialize database
+    logging.info("Initializing database connection...")
+    db_pool = await init_db()
+    if db_pool is None:
+        logging.error("Failed to initialize database connection! Check PostgreSQL is running and credentials are correct.")
+        # We don't raise an exception here to allow the app to start, but services requiring DB will fail
+    else:
+        logging.info("Database connection pool initialized successfully")
+    
+    # Initialize cache
+    logging.info("Initializing cache connection...")
+    try:
+        await init_cache()
+        logging.info("Cache connection initialized successfully")
+    except Exception as e:
+        logging.error(f"Failed to initialize cache connection: {str(e)}")
 
 
 @app.on_event("shutdown")

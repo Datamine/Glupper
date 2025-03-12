@@ -16,8 +16,8 @@ router = APIRouter(prefix="/api/v1/archives", tags=["archives"])
 @router.get("/{post_id}", status_code=status.HTTP_200_OK)
 async def get_post_archives(
     post_id: UUID,
-    include_pending: bool = Query(False, description="Include pending archives in the response"),
     current_user: Annotated[User, Depends(get_current_user)],
+    include_pending: bool = Query(False, description="Include pending archives in the response"),
 ) -> dict[str, Dict]:
     """
     Get archive information for a post.
@@ -57,8 +57,8 @@ async def get_post_archives(
 @router.get("/{post_id}/url", status_code=status.HTTP_200_OK)
 async def get_archive_for_url(
     post_id: UUID,
-    url: str = Query(..., description="The URL to get the archive for"),
     current_user: Annotated[User, Depends(get_current_user)],
+    url: str = Query(..., description="The URL to get the archive for"),
 ) -> dict[str, Optional[str]]:
     """
     Get the archive for a specific URL in a post.
