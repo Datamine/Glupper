@@ -6,3 +6,4 @@ from the SQS queue and storing archives in S3.
 """
 
 __version__ = "0.1.0"
+

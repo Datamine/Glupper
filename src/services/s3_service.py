@@ -60,7 +60,7 @@ def check_archive_exists(job_id: str, filename: str) -> bool:
         if error_code == "404":
             # Not found
             return False
-        logger.error(f"Error checking if archive exists: {str(e)}")
+        logger.exception("Error checking if archive exists")
         return False
 
 

@@ -7,8 +7,8 @@ import boto3
 from botocore.exceptions import ClientError
 
 from src.config_secrets import (
-    ARCHIVE_QUEUE_URL,
     ARCHIVE_DEAD_LETTER_QUEUE_URL,
+    ARCHIVE_QUEUE_URL,
     AWS_ACCESS_KEY_ID,
     AWS_REGION,
     AWS_SECRET_ACCESS_KEY,

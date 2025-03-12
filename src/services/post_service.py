@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
@@ -10,6 +11,8 @@ from src.core.cache import (
 from src.core.db import get_post_with_comments, pool
 from src.services.archive_service import get_archived_urls_for_post, process_post_urls
 from src.services.feed_service import push_post_to_timelines
+
+logger = logging.getLogger(__name__)
 
 
 async def create_post(user_id: UUID, title: str, url: str, media_urls: Optional[list[str]] = None) -> dict:
@@ -59,14 +62,14 @@ async def create_post(user_id: UUID, title: str, url: str, media_urls: Optional[
 
     # Queue URL for archiving
     # This will add the URL to the SQS queue for processing by the archivebox server
-    archive_jobs = await process_post_urls(
+    await process_post_urls(
         post_id=post_id,
         user_id=user_id,
         content=url,  # for top-level posts, primarily archive the URL
         media_urls=media_urls or [],
         title=title,  # pass the title for better archiving
     )
-    
+
     # Add archive status to the response
     # This will initially show pending status
     archive_status = await get_archive_status(post_id)
@@ -93,10 +96,10 @@ async def create_post(user_id: UUID, title: str, url: str, media_urls: Optional[
         "username": result["username"],
         "profile_picture_url": result["profile_picture_url"],
     }
-    
+
     # Push to Redis in the background (don't await)
-    push_task = push_post_to_timelines(full_post, user_id)
-    
+    push_post_to_timelines(full_post, user_id)
+
     return result
 
 
@@ -116,7 +119,7 @@ async def get_post(post_id: UUID) -> Optional[dict]:
     archived_urls = await get_archived_urls_for_post(post_id)
     if archived_urls:
         post["archived_urls"] = archived_urls
-        
+
     # Also get archive status for all URLs (including pending ones)
     archive_status = await get_archive_status(post_id)
     if archive_status:
@@ -141,16 +144,16 @@ async def delete_post(post_id: UUID) -> bool:
                 """,
                 post_id,
             )
-            
+
         # Delete archives for this post
         await delete_archives_for_post(post_id)
-        
+
         # Invalidate cache
         await invalidate_post_cache(post_id)
-        
+
         return True
     except Exception as e:
-        logger.error(f"Error deleting post {post_id}: {str(e)}")
+        logger.exception(f"Error deleting post {post_id}")
         return False
 
 
@@ -167,8 +170,7 @@ async def create_comment(
     if media_urls is None:
         media_urls = []
 
-    async with pool.acquire() as conn:
-        async with conn.transaction():
+    async with pool.acquire() as conn, conn.transaction():
             # First check if original post exists
             post_exists = await conn.fetchval("SELECT 1 FROM posts WHERE id = $1", post_id)
             if not post_exists:
@@ -228,7 +230,7 @@ async def create_comment(
         result["media_urls"] = list(result["media_urls"])
 
     # Archive URLs in background (don't await)
-    process_task = process_post_urls(
+    process_post_urls(
         post_id=comment_id,
         user_id=user_id,
         content=content,
@@ -243,8 +245,7 @@ async def like_post(user_id: UUID, post_id: UUID) -> bool:
     like_id = uuid4()
     now = datetime.now()
 
-    async with pool.acquire() as conn:
-        async with conn.transaction():
+    async with pool.acquire() as conn, conn.transaction():
             # Check if already liked
             existing = await conn.fetchval(
                 """
@@ -289,8 +290,7 @@ async def like_post(user_id: UUID, post_id: UUID) -> bool:
 
 async def unlike_post(user_id: UUID, post_id: UUID) -> bool:
     """Unlike a post"""
-    async with pool.acquire() as conn:
-        async with conn.transaction():
+    async with pool.acquire() as conn, conn.transaction():
             # Check if liked
             existing = await conn.fetchval(
                 """
@@ -337,8 +337,7 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
     repost_id = uuid4()
     now = datetime.now()
 
-    async with pool.acquire() as conn:
-        async with conn.transaction():
+    async with pool.acquire() as conn, conn.transaction():
             # Check if original post exists and get author info
             original_post = await conn.fetchrow(
                 """
@@ -353,25 +352,25 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
 
             if not original_post:
                 return None
-                
+
             # Cannot repost a comment
             if original_post["is_comment"]:
                 return None
-                
+
             # Cannot repost your own post
             if original_post["user_id"] == user_id:
                 return None
-                
+
             # Check if already reposted by this user
             existing_repost = await conn.fetchval(
                 """
-                SELECT 1 FROM posts 
+                SELECT 1 FROM posts
                 WHERE user_id = $1 AND original_post_id = $2 AND is_repost = TRUE
                 """,
                 user_id,
                 original_post_id,
             )
-            
+
             if existing_repost:
                 return None
 
@@ -430,7 +429,7 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
     result = dict(repost)
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
-        
+
     # Add original author info to result
     result["original_user_id"] = original_post["user_id"]
     result["original_username"] = original_post["original_username"]
@@ -458,12 +457,12 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
         "username": result["username"],
         "profile_picture_url": result["profile_picture_url"],
     }
-    
+
     # Push to Redis in the background (don't await)
-    push_task = push_post_to_timelines(full_post, user_id)
+    push_post_to_timelines(full_post, user_id)
 
     # Archive URLs in background (don't await)
-    process_task = process_post_urls(
+    process_post_urls(
         post_id=repost_id,
         user_id=user_id,
         content=original_post["url"] or original_post["content"],
@@ -484,7 +483,7 @@ async def get_user_posts(user_id: UUID, limit: int = 20, offset: int = 0) -> lis
                 u.username, u.profile_picture_url
             FROM posts p
             JOIN users u ON p.user_id = u.id
-            WHERE p.user_id = $1 AND p.is_comment = FALSE 
+            WHERE p.user_id = $1 AND p.is_comment = FALSE
             ORDER BY p.created_at DESC
             LIMIT $2 OFFSET $3
         """,
@@ -509,10 +508,12 @@ async def get_user_posts(user_id: UUID, limit: int = 20, offset: int = 0) -> lis
     return result
 
 
-async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[UUID] = None) -> tuple[list[dict], Optional[UUID]]:
+async def get_user_liked_posts(
+    user_id: UUID, limit: int = 20, cursor: Optional[UUID] = None,
+) -> tuple[list[dict], Optional[UUID]]:
     """
     Get posts that a user has liked with cursor-based pagination
-    
+
     Returns a tuple of (posts, next_cursor) where next_cursor is None if there are no more posts
     """
     async with pool.acquire() as conn:
@@ -531,7 +532,7 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
                 WHERE l.user_id = $1
             """,
         ]
-        
+
         # Add cursor condition if provided
         params = [user_id, limit]
         if cursor:
@@ -547,7 +548,7 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
                 """,
             )
             params.append(cursor)
-        
+
         # Complete the query with ordering and limit
         query_parts.append(
             """
@@ -557,33 +558,33 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
             SELECT * FROM liked_posts
             """,
         )
-        
+
         # Execute the query
         full_query = "\n".join(query_parts)
         rows = await conn.fetch(full_query, *params)
-        
+
         # Process the results
         posts = []
         for row in rows:
             post = dict(row)
             if post["media_urls"] is not None:
                 post["media_urls"] = list(post["media_urls"])
-                
+
             # Mark as liked by the user (since these are all liked posts)
             post["liked_by_user"] = True
-                
+
             # Get archived URLs for each post
             archived_urls = await get_archived_urls_for_post(post["id"])
             if archived_urls:
                 post["archived_urls"] = archived_urls
-                
+
             # For reposts, enhance with original post information
             if post["is_repost"] and post["original_post_id"]:
                 original_post_info = await conn.fetchrow(
                     """
-                    SELECT 
-                        u.id as original_user_id, 
-                        u.username as original_username, 
+                    SELECT
+                        u.id as original_user_id,
+                        u.username as original_username,
                         u.profile_picture_url as original_profile_picture_url
                     FROM posts p
                     JOIN users u ON p.user_id = u.id
@@ -591,15 +592,15 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
                     """,
                     post["original_post_id"],
                 )
-                
+
                 if original_post_info:
                     post.update(dict(original_post_info))
-                
+
             posts.append(post)
-        
+
         # Determine the next cursor
         next_cursor = None
         if len(posts) == limit:
             next_cursor = posts[-1]["id"]
-            
+
         return posts, next_cursor
