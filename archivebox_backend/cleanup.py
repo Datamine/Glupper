@@ -14,10 +14,10 @@ import time
 import boto3
 
 from config import (
+    ARCHIVE_DEAD_LETTER_QUEUE_URL,
     AWS_ACCESS_KEY_ID,
     AWS_REGION,
     AWS_SECRET_ACCESS_KEY,
-    ARCHIVE_DEAD_LETTER_QUEUE_URL,
     POLL_INTERVAL,
 )
 from s3_util import delete_archive_files
@@ -39,27 +39,27 @@ sqs_client = boto3.client(
 )
 
 
-def process_deletion_message(message):
+def process_deletion_message(message: dict) -> bool:
     """Process a deletion message from the SQS queue"""
     try:
         # Parse the message body
         body = json.loads(message["Body"])
         archive_id = body.get("archive_id")
-        
+
         if not archive_id:
             logger.error(f"Invalid deletion message format: {body}")
             return True  # Mark as processed to remove from queue
-            
+
         logger.info(f"Processing deletion for archive {archive_id}")
-        
+
         # Delete the archive files from S3
         success = delete_archive_files(archive_id)
-        
+
         if success:
             logger.info(f"Successfully deleted archive files for {archive_id}")
         else:
             logger.error(f"Failed to delete archive files for {archive_id}")
-            
+
         # We consider the message processed even if deletion failed
         # so it doesn't stay in the queue
         return True
@@ -68,7 +68,7 @@ def process_deletion_message(message):
         return False
 
 
-def poll_deletion_queue():
+def poll_deletion_queue() -> None:
     """Poll the SQS deletion queue"""
     while True:
         try:
@@ -79,32 +79,32 @@ def poll_deletion_queue():
                 WaitTimeSeconds=20,
                 MessageAttributeNames=["All"],
             )
-            
+
             messages = response.get("Messages", [])
             if not messages:
                 # No messages, sleep before polling again
                 time.sleep(POLL_INTERVAL)
                 continue
-                
+
             # Process each message
             for message in messages:
                 receipt_handle = message["ReceiptHandle"]
-                
+
                 # Process the message
                 success = process_deletion_message(message)
-                
+
                 # Delete the message from the queue if processed successfully
                 if success:
                     sqs_client.delete_message(
                         QueueUrl=ARCHIVE_DEAD_LETTER_QUEUE_URL,
                         ReceiptHandle=receipt_handle,
                     )
-                
+
         except KeyboardInterrupt:
             logger.info("Stopping cleanup worker")
             break
         except Exception as e:
-            logger.error(f"Error polling deletion queue: {e}")
+            logger.exception(f"Error polling deletion queue: {e}")
             time.sleep(POLL_INTERVAL)
 
 

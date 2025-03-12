@@ -150,9 +150,8 @@ async def delete_post(post_id: UUID) -> bool:
 
         # Invalidate cache
         await invalidate_post_cache(post_id)
-
         return True
-    except Exception as e:
+    except Exception:
         logger.exception(f"Error deleting post {post_id}")
         return False
 

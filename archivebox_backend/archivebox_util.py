@@ -67,7 +67,7 @@ def archive_url_cli(url: str, title: Optional[str] = None) -> Optional[str]:
                 parts = line.split("/")
                 if len(parts) >= 2:
                     return parts[-2]
-
+        
         logger.warning(f"Archived URL but couldn't extract snapshot ID: {result.stdout}")
         return None
     except Exception:
