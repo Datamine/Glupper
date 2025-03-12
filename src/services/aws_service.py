@@ -2,52 +2,28 @@
 AWS services for Glupper.
 
 This module handles interactions with AWS services like S3 and SQS.
+This service acts as a facade over the specialized s3_service and sqs_service modules.
 """
 import json
 import logging
 import uuid
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Optional, Union
 from uuid import UUID
 
-import boto3
-from botocore.exceptions import ClientError
-
-from src.config_secrets import (
-    AWS_ACCESS_KEY_ID,
-    AWS_REGION,
-    AWS_SECRET_ACCESS_KEY,
-    ARCHIVE_QUEUE_URL,
-    ARCHIVE_DEAD_LETTER_QUEUE_URL,
-    ARCHIVE_S3_BUCKET,
-    ARCHIVE_S3_PREFIX,
+from src.config_secrets import ARCHIVE_DEAD_LETTER_QUEUE_URL
+from src.services.s3_service import (
+    check_archive_exists as s3_check_archive_exists,
+    get_archive_from_s3,
+    generate_presigned_url as s3_generate_presigned_url,
 )
+from src.services.sqs_service import send_archive_job_to_queue
 
 logger = logging.getLogger(__name__)
-
-# Initialize AWS clients
-try:
-    sqs_client = boto3.client(
-        "sqs",
-        region_name=AWS_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    )
-    
-    s3_client = boto3.client(
-        "s3",
-        region_name=AWS_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    )
-except Exception as e:
-    logger.error(f"Failed to initialize AWS clients: {e}")
-    sqs_client = None
-    s3_client = None
 
 
 def get_s3_key(archive_id: Union[UUID, str], filename: str) -> str:
     """
-    Generate an S3 key for an archived file.
+    Alias for s3_service.get_archive_s3_key for backward compatibility.
     
     Args:
         archive_id: The archive ID (UUID)
@@ -56,7 +32,8 @@ def get_s3_key(archive_id: Union[UUID, str], filename: str) -> str:
     Returns:
         The S3 key
     """
-    return f"{ARCHIVE_S3_PREFIX}{archive_id}/{filename}"
+    from src.services.s3_service import get_archive_s3_key
+    return get_archive_s3_key(str(archive_id), filename)
 
 
 def check_archive_exists(archive_id: Union[UUID, str]) -> bool:
@@ -69,25 +46,7 @@ def check_archive_exists(archive_id: Union[UUID, str]) -> bool:
     Returns:
         True if the archive exists and is complete, False otherwise
     """
-    if not s3_client:
-        logger.error("S3 client not initialized")
-        return False
-        
-    try:
-        # Check for the completion marker file
-        key = get_s3_key(archive_id, "complete.json")
-        s3_client.head_object(
-            Bucket=ARCHIVE_S3_BUCKET,
-            Key=key
-        )
-        return True
-    except ClientError as e:
-        error_code = e.response.get("Error", {}).get("Code", "")
-        if error_code == "404":
-            # Not found, archive doesn't exist or is incomplete
-            return False
-        logger.error(f"Error checking archive existence: {str(e)}")
-        return False
+    return s3_check_archive_exists(str(archive_id), "complete.json")
 
 
 def get_archive_metadata(archive_id: Union[UUID, str]) -> Optional[Dict]:
@@ -100,29 +59,13 @@ def get_archive_metadata(archive_id: Union[UUID, str]) -> Optional[Dict]:
     Returns:
         Dictionary with archive metadata if found, None otherwise
     """
-    if not s3_client:
-        logger.error("S3 client not initialized")
-        return None
-        
-    try:
-        key = get_s3_key(archive_id, "complete.json")
-        response = s3_client.get_object(
-            Bucket=ARCHIVE_S3_BUCKET,
-            Key=key
-        )
-        
-        metadata_json = response["Body"].read().decode("utf-8")
-        return json.loads(metadata_json)
-    except ClientError as e:
-        error_code = e.response.get("Error", {}).get("Code", "")
-        if error_code == "404":
-            logger.info(f"Archive metadata not found for {archive_id}")
-        else:
-            logger.error(f"Error getting archive metadata: {str(e)}")
-        return None
-    except Exception as e:
-        logger.error(f"Error parsing archive metadata: {str(e)}")
-        return None
+    data = get_archive_from_s3(str(archive_id), "complete.json")
+    if data:
+        try:
+            return json.loads(data.decode("utf-8"))
+        except Exception as e:
+            logger.error(f"Error parsing archive metadata: {str(e)}")
+    return None
 
 
 def generate_presigned_url(archive_id: Union[UUID, str], filename: str, expiration: int = 3600) -> Optional[str]:
@@ -137,25 +80,7 @@ def generate_presigned_url(archive_id: Union[UUID, str], filename: str, expirati
     Returns:
         Presigned URL if successful, None otherwise
     """
-    if not s3_client:
-        logger.error("S3 client not initialized")
-        return None
-        
-    try:
-        key = get_s3_key(archive_id, filename)
-        response = s3_client.generate_presigned_url(
-            "get_object",
-            Params={
-                "Bucket": ARCHIVE_S3_BUCKET,
-                "Key": key,
-            },
-            ExpiresIn=expiration,
-        )
-        
-        return response
-    except Exception as e:
-        logger.error(f"Error generating presigned URL: {str(e)}")
-        return None
+    return s3_generate_presigned_url(str(archive_id), filename, expiration)
 
 
 def queue_url_for_archiving(url: str, title: Optional[str] = None) -> Optional[str]:
@@ -169,28 +94,18 @@ def queue_url_for_archiving(url: str, title: Optional[str] = None) -> Optional[s
     Returns:
         The archive_id (UUID) if successful, None otherwise
     """
-    if not sqs_client:
-        logger.error("SQS client not initialized")
-        return None
-        
     try:
         # Generate a unique ID for this archive
         archive_id = str(uuid.uuid4())
         
-        # Prepare the message
-        message = {
-            "url": url,
-            "archive_id": archive_id,
-            "title": title or "",
-        }
+        # Use a placeholder post_id when called directly from this service
+        # The actual post_id association happens in archive_service.py
+        post_id = "pending"
         
-        # Send the message to SQS
-        response = sqs_client.send_message(
-            QueueUrl=ARCHIVE_QUEUE_URL,
-            MessageBody=json.dumps(message),
-        )
+        # Send to queue using specialized service
+        response = send_archive_job_to_queue(archive_id, url, post_id, title)
         
-        if response.get("MessageId"):
+        if response:
             logger.info(f"Queued URL {url} for archiving with ID {archive_id}")
             return archive_id
         else:
@@ -211,6 +126,8 @@ def queue_archive_for_deletion(archive_id: Union[UUID, str]) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    from src.services.sqs_service import sqs_client
+    
     if not sqs_client:
         logger.error("SQS client not initialized")
         return False

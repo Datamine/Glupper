@@ -19,15 +19,12 @@ Requirements:
 
 import json
 import logging
-import os
 import sys
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 import boto3
-import httpx
-from botocore.exceptions import ClientError
 
 from config import (
     AWS_ACCESS_KEY_ID,

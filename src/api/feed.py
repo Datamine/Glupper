@@ -30,19 +30,19 @@ async def home_timeline(
 ) -> FeedResponse:
     """
     Get the authenticated user's home timeline.
-    
+
     Parameters:
     - **cursor**: Optional base64 encoded pagination cursor
     - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
     - **feed_type**: Feed algorithm type - "chronological" (default) or "for_you"
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **FeedResponse**: List of posts and pagination cursor
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
-    
+
     Notes:
     - Uses cursor-based pagination for optimal performance
     - The cursor is a base64 encoded post ID used as a starting point
@@ -69,12 +69,12 @@ async def home_timeline(
             start_idx = int(str(before_id))
         except:
             pass
-    
+
     # Pass the feed_type to the service layer
     posts = await get_timeline_from_redis(
-        current_user.id, 
-        limit, 
-        start_idx, 
+        current_user.id,
+        limit,
+        start_idx,
         feed_type
     )
 
@@ -100,18 +100,18 @@ async def explore_feed(
 ) -> FeedResponse:
     """
     Get discover feed with popular content from non-followed users.
-    
+
     Parameters:
     - **offset**: Pagination offset (default: 0)
     - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **FeedResponse**: List of posts and pagination information
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
-    
+
     Notes:
     - Shows popular content from users that the current user doesn't follow
     - Uses offset-based pagination
@@ -131,7 +131,7 @@ async def explore_feed(
 async def trending_topics() -> list[TrendingTopic]:
     """
     Get trending topics and hashtags.
-    
+
     Returns:
     - **list[TrendingTopic]**: List of trending topics with their post counts
     """
@@ -145,10 +145,10 @@ async def trending_posts(
 ) -> list[PostResponse]:
     """
     Get trending posts across the platform.
-    
+
     Parameters:
     - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
-    
+
     Returns:
     - **list[PostResponse]**: List of trending posts sorted by popularity
     """

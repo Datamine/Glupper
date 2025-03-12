@@ -21,13 +21,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register(user_data: UserCreate) -> UserResponse:
     """
     Register a new user.
-    
+
     Parameters:
     - **user_data**: User registration data including username, email, and password
-    
+
     Returns:
     - **UserResponse**: Newly created user information
-    
+
     Raises:
     - **400 Bad Request**: If username is already registered
     """
@@ -50,13 +50,13 @@ async def register(user_data: UserCreate) -> UserResponse:
 async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
     """
     Authenticate a user and return an access token.
-    
+
     Parameters:
     - **form_data**: OAuth2 password request form containing username and password
-    
+
     Returns:
     - **Token**: JWT access token for authentication
-    
+
     Raises:
     - **401 Unauthorized**: If credentials are invalid
     """
@@ -83,17 +83,17 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> T
 
 @router.get("/me", status_code=status.HTTP_200_OK)
 async def get_current_user_info(
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
     """
     Get the currently authenticated user's information.
-    
+
     Parameters:
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **User**: Current user information
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     """

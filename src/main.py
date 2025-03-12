@@ -56,5 +56,5 @@ async def api_version():
     return {
         "version": "1.0.0",
         "name": "Glupper API",
-        "endpoints": "/api/v1"
+        "endpoints": "/api/v1",
     }

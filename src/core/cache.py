@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from uuid import UUID
 
 import redis.asyncio as redis
@@ -36,77 +36,77 @@ def _serialize_uuid(obj: Any) -> Any:
 
 
 # Timeline cache functions
-async def cache_user_timeline(user_id: UUID, posts: List[Dict[str, Any]], expiry: int = 300):
+async def cache_user_timeline(user_id: UUID, posts: list[dict[str, Any]], expiry: int = 300):
     """Cache a user's timeline posts in Redis for high-performance reads using RedisTimeline model"""
     if not redis_client:
         return
 
     key = f"timeline:{user_id}"
-    
+
     # Convert posts to RedisPost objects
     redis_posts = [RedisPost.from_dict(post) for post in posts]
-    
+
     # Create a RedisTimeline object
     timeline = RedisTimeline(
         user_id=user_id,
         posts=redis_posts,
     )
-    
+
     # Store the serialized timeline
     await redis_client.setex(key, expiry, timeline.to_redis())
 
 
-async def get_cached_timeline(user_id: UUID) -> Optional[List[Dict[str, Any]]]:
+async def get_cached_timeline(user_id: UUID) -> Optional[list[dict[str, Any]]]:
     """Get cached timeline posts for a user using RedisTimeline model"""
     if not redis_client:
         return None
 
     key = f"timeline:{user_id}"
     cached = await redis_client.get(key)
-    
+
     if not cached:
         return None
-        
+
     # Parse the cached data into a RedisTimeline object
     timeline = RedisTimeline.from_redis(cached)
-    
+
     if not timeline:
         return None
-        
+
     # Convert to API response format
     return [post.dict() for post in timeline.posts]
 
 
 # Post cache functions
-async def cache_post(post_id: UUID, post_data: Dict[str, Any], expiry: int = 300):
+async def cache_post(post_id: UUID, post_data: dict[str, Any], expiry: int = 300):
     """Cache post data in Redis using RedisPost model"""
     if not redis_client:
         return
 
     key = f"post:{post_id}"
-    
+
     # Convert to RedisPost and serialize
     redis_post = RedisPost.from_dict(post_data)
     await redis_client.setex(key, expiry, redis_post.to_redis())
 
 
-async def get_cached_post(post_id: UUID) -> Optional[Dict[str, Any]]:
+async def get_cached_post(post_id: UUID) -> Optional[dict[str, Any]]:
     """Get cached post data using RedisPost model"""
     if not redis_client:
         return None
 
     key = f"post:{post_id}"
     cached = await redis_client.get(key)
-    
+
     if not cached:
         return None
-        
+
     # Parse the cached data into a RedisPost object
     post = RedisPost.from_redis(cached)
-    
+
     if not post:
         return None
-        
+
     # Convert to dictionary for API response
     return post.dict()
 
@@ -135,42 +135,42 @@ async def get_cached_user_profile(user_id: UUID) -> Optional[dict[str, Any]]:
 
 
 # Trending posts cache
-async def cache_trending_posts(posts: List[Dict[str, Any]], expiry: int = 300):
+async def cache_trending_posts(posts: list[dict[str, Any]], expiry: int = 300):
     """Cache trending posts in Redis using RedisTrending model"""
     if not redis_client:
         return
 
     key = "trending:posts"
-    
+
     # Convert posts to RedisPost objects
     redis_posts = [RedisPost.from_dict(post) for post in posts]
-    
+
     # Create a RedisTrending object
     trending = RedisTrending(
         posts=redis_posts,
     )
-    
+
     # Store the serialized trending posts
     await redis_client.setex(key, expiry, trending.to_redis())
 
 
-async def get_cached_trending_posts() -> Optional[List[Dict[str, Any]]]:
+async def get_cached_trending_posts() -> Optional[list[dict[str, Any]]]:
     """Get cached trending posts using RedisTrending model"""
     if not redis_client:
         return None
 
     key = "trending:posts"
     cached = await redis_client.get(key)
-    
+
     if not cached:
         return None
-        
+
     # Parse the cached data into a RedisTrending object
     trending = RedisTrending.from_redis(cached)
-    
+
     if not trending:
         return None
-        
+
     # Convert to API response format
     return [post.dict() for post in trending.posts]
 

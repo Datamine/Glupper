@@ -6,7 +6,7 @@ This module handles URL archiving using AWS SQS and S3 with a separate ArchiveBo
 
 import logging
 import re
-from typing import Dict, List, Optional, Union
+from typing import Optional
 from uuid import UUID
 
 from src.core.db import pool
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 URL_PATTERN = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+"
 
 
-async def extract_urls_from_content(content: str) -> List[str]:
+async def extract_urls_from_content(content: str) -> list[str]:
     """Extract URLs from post content"""
     if not content:
         return []
@@ -36,11 +36,11 @@ async def extract_urls_from_content(content: str) -> List[str]:
 async def archive_url(url: str, title: Optional[str] = None) -> Optional[str]:
     """
     Queue a URL for archiving.
-    
+
     Args:
         url: The URL to archive
         title: Optional title for the page
-        
+
     Returns:
         The archive_id if successfully queued, None otherwise
     """
@@ -48,22 +48,22 @@ async def archive_url(url: str, title: Optional[str] = None) -> Optional[str]:
 
 
 async def process_post_urls(
-    post_id: UUID, 
-    user_id: UUID, 
-    content: str, 
-    media_urls: List[str], 
-    title: Optional[str] = None
-) -> Dict[str, str]:
+    post_id: UUID,
+    user_id: UUID,
+    content: str,
+    media_urls: list[str],
+    title: Optional[str] = None,
+) -> dict[str, str]:
     """
     Process all URLs in a post and queue them for archiving.
-    
+
     Args:
         post_id: The post ID
         user_id: The user ID
         content: The post content
         media_urls: List of media URLs
         title: Optional title for the post
-        
+
     Returns:
         Dictionary mapping URLs to archive_ids
     """
@@ -74,7 +74,7 @@ async def process_post_urls(
     all_urls = list(set(content_urls + media_urls))
 
     # For direct URL posts, ensure the URL is included
-    if content and content.startswith(('http://', 'https://')) and content not in all_urls:
+    if content and content.startswith(("http://", "https://")) and content not in all_urls:
         all_urls.append(content)
 
     if not all_urls:
@@ -89,7 +89,7 @@ async def process_post_urls(
             async with pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO archived_urls 
+                    INSERT INTO archived_urls
                     (post_id, original_url, archive_id, created_at, updated_at)
                     VALUES ($1, $2, $3, NOW(), NOW())
                     ON CONFLICT (post_id, original_url) DO UPDATE
@@ -99,19 +99,19 @@ async def process_post_urls(
                     url,
                     archive_id,
                 )
-            
+
             results[url] = archive_id
 
     return results
 
 
-async def get_archive_status(post_id: UUID) -> Dict[str, Dict]:
+async def get_archive_status(post_id: UUID) -> dict[str, dict]:
     """
     Get the archive status for all URLs in a post.
-    
+
     Args:
         post_id: The post ID
-        
+
     Returns:
         Dictionary with archive status information for each URL
     """
@@ -130,7 +130,7 @@ async def get_archive_status(post_id: UUID) -> Dict[str, Dict]:
     for row in rows:
         url = row["original_url"]
         archive_id = row["archive_id"]
-        
+
         # Check if the archive exists in S3
         if check_archive_exists(archive_id):
             # Get the archive metadata
@@ -159,24 +159,24 @@ async def get_archive_status(post_id: UUID) -> Dict[str, Dict]:
     return result
 
 
-async def get_archived_urls_for_post(post_id: UUID) -> Dict[str, str]:
+async def get_archived_urls_for_post(post_id: UUID) -> dict[str, str]:
     """
     Get completed archived URLs for a post.
-    
+
     Args:
         post_id: The post ID
-        
+
     Returns:
         Dictionary mapping original URLs to archived URLs
     """
     status = await get_archive_status(post_id)
-    
+
     result = {}
     for url, info in status.items():
         if info.get("status") == "completed":
             archive_id = info.get("archive_id")
             main_file = info.get("main_file", "index.html")
-            
+
             # Generate a presigned URL for the main file
             archived_url = generate_presigned_url(archive_id, main_file)
             if archived_url:
@@ -188,10 +188,10 @@ async def get_archived_urls_for_post(post_id: UUID) -> Dict[str, str]:
 async def delete_archives_for_post(post_id: UUID) -> bool:
     """
     Queue archives for deletion when a post is deleted.
-    
+
     Args:
         post_id: The post ID
-        
+
     Returns:
         True if successful, False otherwise
     """
@@ -204,7 +204,7 @@ async def delete_archives_for_post(post_id: UUID) -> bool:
                 """,
                 post_id,
             )
-            
+
             # Delete the archive records
             await conn.execute(
                 """
@@ -212,13 +212,14 @@ async def delete_archives_for_post(post_id: UUID) -> bool:
                 """,
                 post_id,
             )
-        
+
         # Queue each archive for deletion
         for row in rows:
             archive_id = row["archive_id"]
             queue_archive_for_deletion(archive_id)
-        
-        return True
-    except Exception as e:
-        logger.error(f"Error deleting archives for post {post_id}: {str(e)}")
+
+    except Exception:
+        logger.exception(f"Error deleting archives for post {post_id}.")
         return False
+    else:
+        return True

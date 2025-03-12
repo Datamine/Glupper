@@ -369,7 +369,7 @@ async def repost(user_id: UUID, original_post_id: UUID) -> Optional[dict]:
                 WHERE user_id = $1 AND original_post_id = $2 AND is_repost = TRUE
                 """,
                 user_id,
-                original_post_id
+                original_post_id,
             )
             
             if existing_repost:
@@ -529,7 +529,7 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
                 JOIN posts p ON l.post_id = p.id
                 JOIN users u ON p.user_id = u.id
                 WHERE l.user_id = $1
-            """
+            """,
         ]
         
         # Add cursor condition if provided
@@ -544,7 +544,7 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
                         AND l.post_id < $3
                     )
                 )
-                """
+                """,
             )
             params.append(cursor)
         
@@ -555,7 +555,7 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
             LIMIT $2
             )
             SELECT * FROM liked_posts
-            """
+            """,
         )
         
         # Execute the query
@@ -589,7 +589,7 @@ async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[
                     JOIN users u ON p.user_id = u.id
                     WHERE p.id = $1
                     """,
-                    post["original_post_id"]
+                    post["original_post_id"],
                 )
                 
                 if original_post_info:

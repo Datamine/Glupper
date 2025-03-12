@@ -27,13 +27,13 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 async def get_user(user_id: UUID) -> UserResponse:
     """
     Get a user's profile by their ID.
-    
+
     Parameters:
     - **user_id**: UUID of the user to retrieve
-    
+
     Returns:
     - **UserResponse**: User profile information
-    
+
     Raises:
     - **404 Not Found**: If user does not exist
     """
@@ -53,14 +53,14 @@ async def update_profile(
 ) -> UserResponse:
     """
     Update the current authenticated user's profile.
-    
+
     Parameters:
     - **update_data**: User data to update (bio, profile picture)
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **UserResponse**: Updated user profile information
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     """
@@ -73,18 +73,18 @@ async def get_followers(
     user_id: UUID,
     limit: int = 20,
     offset: int = 0,
-) -> List[UserResponse]:
+) -> list[UserResponse]:
     """
     Get a list of users who follow the specified user.
-    
+
     Parameters:
     - **user_id**: UUID of the user whose followers to retrieve
     - **limit**: Maximum number of users to return (default: 20)
     - **offset**: Pagination offset (default: 0)
-    
+
     Returns:
-    - **List[UserResponse]**: List of users who follow the specified user
-    
+    - **list[UserResponse]**: List of users who follow the specified user
+
     Raises:
     - **404 Not Found**: If user does not exist
     """
@@ -105,18 +105,18 @@ async def get_following(
     user_id: UUID,
     limit: int = 20,
     offset: int = 0,
-) -> List[UserResponse]:
+) -> list[UserResponse]:
     """
     Get a list of users that the specified user is following.
-    
+
     Parameters:
     - **user_id**: UUID of the user whose followings to retrieve
     - **limit**: Maximum number of users to return (default: 20)
     - **offset**: Pagination offset (default: 0)
-    
+
     Returns:
-    - **List[UserResponse]**: List of users followed by the specified user
-    
+    - **list[UserResponse]**: List of users followed by the specified user
+
     Raises:
     - **404 Not Found**: If user does not exist
     """
@@ -139,14 +139,14 @@ async def follow(
 ) -> dict[str, bool]:
     """
     Follow another user.
-    
+
     Parameters:
     - **user_id**: UUID of the user to follow
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **dict[str, bool]**: Success status of the operation
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     - **404 Not Found**: If user does not exist
@@ -178,14 +178,14 @@ async def unfollow(
 ) -> dict[str, bool]:
     """
     Unfollow a currently followed user.
-    
+
     Parameters:
     - **user_id**: UUID of the user to unfollow
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **dict[str, bool]**: Success status of the operation
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     - **404 Not Found**: If user does not exist
@@ -217,14 +217,14 @@ async def mute(
 ) -> dict[str, bool]:
     """
     Mute another user to hide their posts from your feed.
-    
+
     Parameters:
     - **user_id**: UUID of the user to mute
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **dict[str, bool]**: Success status of the operation
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     - **404 Not Found**: If user does not exist
@@ -256,14 +256,14 @@ async def unmute(
 ) -> dict[str, bool]:
     """
     Unmute a previously muted user to see their posts again.
-    
+
     Parameters:
     - **user_id**: UUID of the user to unmute
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **dict[str, bool]**: Success status of the operation
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     - **404 Not Found**: If user does not exist
@@ -296,27 +296,27 @@ async def get_muted(
 ) -> MutedUsersResponse:
     """
     Get list of users that the current user has muted.
-    
+
     Parameters:
     - **limit**: Maximum number of users to return (default: 50)
     - **offset**: Pagination offset (default: 0)
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **MutedUsersResponse**: List of muted users with pagination info
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     """
     muted_users = await get_muted_users(current_user.id, limit, offset)
-    
+
     # Get total count of muted users
     async with pool.acquire() as conn:
         total = await conn.fetchval(
             "SELECT COUNT(*) FROM mutes WHERE muter_id = $1",
             current_user.id
         )
-    
+
     return MutedUsersResponse(
         users=muted_users,
         total=total or 0
@@ -330,14 +330,14 @@ async def check_if_muted(
 ) -> dict[str, bool]:
     """
     Check if a user is muted by the current user.
-    
+
     Parameters:
     - **user_id**: UUID of the user to check
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - **dict[str, bool]**: Whether the user is muted
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     - **404 Not Found**: If user does not exist
@@ -349,6 +349,6 @@ async def check_if_muted(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    
+
     is_muted = await is_user_muted(current_user.id, user_id)
     return {"is_muted": is_muted}

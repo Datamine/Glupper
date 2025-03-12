@@ -18,18 +18,18 @@ async def get_post_archives(
     post_id: UUID,
     include_pending: bool = Query(False, description="Include pending archives in the response"),
     current_user: Annotated[User, Depends(get_current_user)],
-) -> Dict[str, Dict]:
+) -> dict[str, Dict]:
     """
     Get archive information for a post.
-    
+
     Parameters:
     - **post_id**: UUID of the post
     - **include_pending**: Whether to include pending archives in the response
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - Dictionary with archive information
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     - **404 Not Found**: If no archives found
@@ -44,13 +44,13 @@ async def get_post_archives(
             archive_info = {"completed": archives}
         else:
             archive_info = {}
-            
+
     if not archive_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No archives found for this post",
         )
-        
+
     return {"archives": archive_info}
 
 
@@ -59,18 +59,18 @@ async def get_archive_for_url(
     post_id: UUID,
     url: str = Query(..., description="The URL to get the archive for"),
     current_user: Annotated[User, Depends(get_current_user)],
-) -> Dict[str, Optional[str]]:
+) -> dict[str, Optional[str]]:
     """
     Get the archive for a specific URL in a post.
-    
+
     Parameters:
     - **post_id**: UUID of the post
     - **url**: The URL to get the archive for
     - **current_user**: User object from token authentication dependency
-    
+
     Returns:
     - Dictionary with archive URL
-    
+
     Raises:
     - **401 Unauthorized**: If not authenticated
     - **404 Not Found**: If archive not found
@@ -78,15 +78,15 @@ async def get_archive_for_url(
     """
     # Get archive status for all URLs
     status_info = await get_archive_status(post_id)
-    
+
     if url not in status_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No archive found for this URL",
         )
-        
+
     archive_info = status_info[url]
-    
+
     # Check status
     if archive_info["status"] == "pending" or archive_info["status"] == "processing":
         raise HTTPException(
@@ -98,7 +98,7 @@ async def get_archive_for_url(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Archive failed to process",
         )
-        
+
     # Return the archive URL
     archive_url = archive_info.get("archived_url") or archive_info.get("s3_location")
     if not archive_url:
@@ -106,5 +106,5 @@ async def get_archive_for_url(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Archive URL not found",
         )
-        
+
     return {"archived_url": archive_url}

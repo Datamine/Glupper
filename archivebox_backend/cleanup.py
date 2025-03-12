@@ -10,10 +10,8 @@ import json
 import logging
 import sys
 import time
-from typing import Dict, List, Optional
 
 import boto3
-from botocore.exceptions import ClientError
 
 from config import (
     AWS_ACCESS_KEY_ID,

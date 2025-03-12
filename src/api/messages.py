@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -17,17 +17,18 @@ router = APIRouter(prefix="/api/v1/messages", tags=["messages"])
 
 @router.post("", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(
-    message: MessageCreate, current_user: User = Depends(get_current_user)
+    message: MessageCreate,
+    current_user: User = Depends(get_current_user),
 ):
     """Send a direct message to a user"""
-    
+
     # Check if trying to send message to self
     if message.recipient_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot send message to yourself",
         )
-    
+
     try:
         return await message_service.send_message(
             sender_id=current_user.id,
@@ -54,7 +55,7 @@ async def get_conversations(
     )
 
 
-@router.get("/conversations/{user_id}", response_model=List[MessageResponse])
+@router.get("/conversations/{user_id}", response_model=list[MessageResponse])
 async def get_conversation_messages(
     user_id: UUID,
     limit: int = Query(50, ge=1, le=100),
@@ -62,14 +63,14 @@ async def get_conversation_messages(
     current_user: User = Depends(get_current_user),
 ):
     """Get messages between the current user and another user"""
-    
+
     # Check if trying to get conversation with self
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot have conversation with yourself",
         )
-    
+
     return await message_service.get_conversation_messages(
         user_id=current_user.id,
         other_user_id=user_id,

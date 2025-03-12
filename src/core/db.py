@@ -119,7 +119,7 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON follows(follower_id);
             CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id);
         """)
-        
+
         # Mutes table
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS mutes (
@@ -148,7 +148,7 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_archived_urls_original_url ON archived_urls(original_url);
             CREATE INDEX IF NOT EXISTS idx_archived_urls_archive_id ON archived_urls(archive_id);
         """)
-        
+
         # Messages table
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (

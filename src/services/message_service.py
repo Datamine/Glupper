@@ -1,16 +1,13 @@
-from datetime import datetime
-from typing import List, Optional
+from datetime import UTC, datetime
+from typing import Optional
 from uuid import UUID, uuid4
 
-from asyncpg import Connection
-
 from src.core.db import get_connection, release_connection
-from src.models.models import Message
 from src.schemas.schemas import (
     ConversationListResponse,
     ConversationResponse,
-    MessageCreate, 
-    MessageResponse
+    MessageCreate,
+    MessageResponse,
 )
 
 
@@ -23,8 +20,8 @@ async def send_message(
     try:
         # Create the message
         message_id = uuid4()
-        now = datetime.utcnow()
-        
+        now = datetime.now(UTC)
+
         # Store the message in the database
         await conn.execute(
             """
@@ -39,21 +36,21 @@ async def send_message(
             now,
             now,
         )
-        
+
         # Get sender and recipient info for response
         sender = await conn.fetchrow(
             "SELECT username, profile_picture_url FROM users WHERE id = $1",
-            sender_id
+            sender_id,
         )
-        
+
         recipient = await conn.fetchrow(
             "SELECT username, profile_picture_url FROM users WHERE id = $1",
-            message_data.recipient_id
+            message_data.recipient_id,
         )
-        
+
         if not sender or not recipient:
             raise ValueError("Sender or recipient not found")
-        
+
         return MessageResponse(
             id=message_id,
             sender_id=sender_id,
@@ -75,16 +72,16 @@ async def get_conversation_messages(
     other_user_id: UUID,
     limit: int = 50,
     before_id: Optional[UUID] = None,
-) -> List[MessageResponse]:
+) -> list[MessageResponse]:
     """Get messages between two users"""
     conn = await get_connection()
     try:
         # Get the messages
         query = """
         WITH message_data AS (
-            SELECT 
+            SELECT
                 m.id, m.sender_id, m.recipient_id, m.content, m.is_read, m.created_at,
-                sender.username as sender_username, 
+                sender.username as sender_username,
                 sender.profile_picture_url as sender_profile_picture_url,
                 recipient.username as recipient_username,
                 recipient.profile_picture_url as recipient_profile_picture_url
@@ -94,9 +91,9 @@ async def get_conversation_messages(
             WHERE (m.sender_id = $1 AND m.recipient_id = $2)
                OR (m.sender_id = $2 AND m.recipient_id = $1)
         """
-        
+
         params = [user_id, other_user_id, limit]
-        
+
         # Add cursor-based pagination if a before_id is provided
         if before_id:
             query += """
@@ -106,7 +103,7 @@ async def get_conversation_messages(
             )
             """
             params.append(before_id)
-        
+
         query += """
         ORDER BY m.created_at DESC
         LIMIT $3
@@ -114,15 +111,12 @@ async def get_conversation_messages(
         SELECT * FROM message_data
         ORDER BY created_at ASC
         """
-        
+
         rows = await conn.fetch(query, *params)
-        
+
         # Mark messages as read if they were sent to the requesting user
-        unread_ids = []
-        for row in rows:
-            if row["recipient_id"] == user_id and not row["is_read"]:
-                unread_ids.append(row["id"])
-        
+        unread_ids = [row["id"] for row in rows if row["recipient_id"] == user_id and not row["is_read"]]
+
         if unread_ids:
             # Update messages as read in a batch
             await conn.execute(
@@ -131,41 +125,38 @@ async def get_conversation_messages(
                 SET is_read = TRUE, updated_at = $1
                 WHERE id = ANY($2)
                 """,
-                datetime.utcnow(),
+                datetime.now(UTC),
                 unread_ids,
             )
-        
+
         # Convert to response objects
-        messages = []
-        for row in rows:
-            messages.append(
-                MessageResponse(
-                    id=row["id"],
-                    sender_id=row["sender_id"],
-                    sender_username=row["sender_username"],
-                    sender_profile_picture_url=row["sender_profile_picture_url"],
-                    recipient_id=row["recipient_id"],
-                    recipient_username=row["recipient_username"],
-                    recipient_profile_picture_url=row["recipient_profile_picture_url"],
-                    content=row["content"],
-                    is_read=True if row["recipient_id"] == user_id else row["is_read"],
-                    created_at=row["created_at"],
-                )
+        return [
+            MessageResponse(
+                id=row["id"],
+                sender_id=row["sender_id"],
+                sender_username=row["sender_username"],
+                sender_profile_picture_url=row["sender_profile_picture_url"],
+                recipient_id=row["recipient_id"],
+                recipient_username=row["recipient_username"],
+                recipient_profile_picture_url=row["recipient_profile_picture_url"],
+                content=row["content"],
+                is_read=True if row["recipient_id"] == user_id else row["is_read"],
+                created_at=row["created_at"],
             )
-            
-        return messages
+            for row in rows
+        ]
     finally:
         await release_connection(conn)
 
 
 async def get_conversations(
-    user_id: UUID, 
-    limit: int = 20, 
-    offset: int = 0
+    user_id: UUID,
+    limit: int = 20,
+    offset: int = 0,
 ) -> ConversationListResponse:
     """
     Get a list of conversations for a user
-    
+
     This returns a list of users that the current user has exchanged messages with,
     along with the latest message and unread count for each conversation.
     """
@@ -195,7 +186,7 @@ async def get_conversations(
                 END AS other_user_id
             FROM messages m
             WHERE m.sender_id = $1 OR m.recipient_id = $1
-            ORDER BY 
+            ORDER BY
                 LEAST(m.sender_id, m.recipient_id),
                 GREATEST(m.sender_id, m.recipient_id),
                 m.created_at DESC
@@ -222,7 +213,7 @@ async def get_conversations(
             (
                 SELECT MIN(created_at)
                 FROM messages
-                WHERE 
+                WHERE
                     (sender_id = $1 AND recipient_id = u.id) OR
                     (sender_id = u.id AND recipient_id = $1)
             ) AS conversation_created_at
@@ -233,30 +224,30 @@ async def get_conversations(
         ORDER BY lm.created_at DESC
         LIMIT $2 OFFSET $3
         """
-        
+
         rows = await conn.fetch(query, user_id, limit, offset)
-        
+
         # Get sender and recipient info for each conversation
         conversations = []
         for row in rows:
             sender_id = row["sender_id"]
             recipient_id = row["recipient_id"]
-            
+
             # Get sender info
             sender = await conn.fetchrow(
                 "SELECT username, profile_picture_url FROM users WHERE id = $1",
-                sender_id
+                sender_id,
             )
-            
+
             # Get recipient info
             recipient = await conn.fetchrow(
                 "SELECT username, profile_picture_url FROM users WHERE id = $1",
-                recipient_id
+                recipient_id,
             )
-            
+
             if not sender or not recipient:
                 continue
-                
+
             last_message = MessageResponse(
                 id=row["message_id"],
                 sender_id=sender_id,
@@ -269,7 +260,7 @@ async def get_conversations(
                 is_read=row["is_read"],
                 created_at=row["message_created_at"],
             )
-            
+
             conversations.append(
                 ConversationResponse(
                     user_id=row["user_id"],
@@ -278,9 +269,9 @@ async def get_conversations(
                     last_message=last_message,
                     unread_count=row["unread_count"],
                     created_at=row["conversation_created_at"],
-                )
+                ),
             )
-        
+
         return ConversationListResponse(conversations=conversations)
     finally:
         await release_connection(conn)
@@ -296,11 +287,11 @@ async def mark_conversation_as_read(user_id: UUID, other_user_id: UUID) -> int:
             SET is_read = TRUE, updated_at = $1
             WHERE recipient_id = $2 AND sender_id = $3 AND is_read = FALSE
             """,
-            datetime.utcnow(),
+            datetime.now(UTC),
             user_id,
             other_user_id,
         )
-        
+
         # Return the number of messages marked as read
         return int(result.split(" ")[1]) if result else 0
     finally:
@@ -313,7 +304,7 @@ async def get_unread_message_count(user_id: UUID) -> int:
     try:
         result = await conn.fetchval(
             "SELECT COUNT(*) FROM messages WHERE recipient_id = $1 AND is_read = FALSE",
-            user_id
+            user_id,
         )
         return result or 0
     finally:

@@ -6,10 +6,9 @@ import json
 import logging
 import os
 import subprocess
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import httpx
-
 from config import ARCHIVEBOX_API_ENDPOINT, ARCHIVEBOX_DATA_DIR
 
 logger = logging.getLogger("archivebox_util")
@@ -29,7 +28,7 @@ def archive_url_api(url: str) -> Optional[Dict]:
 
             if response.status_code in (200, 201):
                 return response.json()
-            
+
             logger.error(f"Failed to archive URL {url}: {response.status_code} {response.text}")
             return None
     except Exception as e:
@@ -47,20 +46,20 @@ def archive_url_cli(url: str, title: Optional[str] = None) -> Optional[str]:
         cmd = ["archivebox", "add", url]
         if title:
             cmd.extend(["--title", title])
-            
+
         # Set working directory to ArchiveBox data dir
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=ARCHIVEBOX_DATA_DIR
+            cwd=ARCHIVEBOX_DATA_DIR,
         )
-        
+
         if result.returncode != 0:
             logger.error(f"Failed to archive URL {url}: {result.stderr}")
             return None
-            
+
         # Parse output to get snapshot ID
         for line in result.stdout.splitlines():
             if "Saved:" in line and "index.html" in line:
@@ -69,7 +68,7 @@ def archive_url_cli(url: str, title: Optional[str] = None) -> Optional[str]:
                 if len(parts) >= 2:
                     snapshot_id = parts[-2]
                     return snapshot_id
-                    
+
         logger.warning(f"Archived URL but couldn't extract snapshot ID: {result.stdout}")
         return None
     except Exception as e:
@@ -77,7 +76,7 @@ def archive_url_cli(url: str, title: Optional[str] = None) -> Optional[str]:
         return None
 
 
-def get_snapshot_files(snapshot_id: str) -> List[Dict]:
+def get_snapshot_files(snapshot_id: str) -> list[Dict]:
     """
     Get information about files in a snapshot
     Returns a list of file info dictionaries
@@ -87,26 +86,28 @@ def get_snapshot_files(snapshot_id: str) -> List[Dict]:
         if not os.path.exists(snapshot_dir):
             logger.error(f"Snapshot directory not found: {snapshot_dir}")
             return []
-            
+
         # Read the JSON index file if available
         index_path = os.path.join(snapshot_dir, "index.json")
         if os.path.exists(index_path):
             with open(index_path, "r") as f:
                 index_data = json.load(f)
-                
+
             # Extract files from the snapshot index
             files = []
             for archive_method, output in index_data.get("archives", {}).items():
                 if output.get("status") == "succeeded" and "output" in output:
                     output_path = output["output"]
-                    files.append({
-                        "path": os.path.join(snapshot_dir, output_path),
-                        "filename": os.path.basename(output_path),
-                        "method": archive_method,
-                        "content_type": get_content_type(output_path),
-                    })
+                    files.append(
+                        {
+                            "path": os.path.join(snapshot_dir, output_path),
+                            "filename": os.path.basename(output_path),
+                            "method": archive_method,
+                            "content_type": get_content_type(output_path),
+                        },
+                    )
             return files
-        
+
         # Fallback: List all files in the directory
         return [
             {
