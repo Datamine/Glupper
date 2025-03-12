@@ -199,20 +199,23 @@ async def get_explore_feed(user_id: UUID, limit: int = 20, offset: int = 0) -> l
     2. Content with high engagement
     3. Content that's trending
     4. A mix of new and established content to promote discovery
+    5. Excludes posts from muted users
     """
     async with pool.acquire() as conn:
-        # Get followed users to exclude
-        followed_ids_query = """
-            SELECT followee_id FROM follows WHERE follower_id = $1
+        # Get followed users and muted users to exclude
+        excluded_users_query = """
+            SELECT followee_id as user_id FROM follows WHERE follower_id = $1
+            UNION
+            SELECT muted_id as user_id FROM mutes WHERE muter_id = $1
         """
-        followed_rows = await conn.fetch(followed_ids_query, user_id)
-        followed_ids = [row["followee_id"] for row in followed_rows]
+        excluded_rows = await conn.fetch(excluded_users_query, user_id)
+        excluded_ids = [row["user_id"] for row in excluded_rows]
 
         # Add the user's own ID to exclude
-        followed_ids.append(user_id)
+        excluded_ids.append(user_id)
 
         # Build the exclusion list for the query
-        exclusion_ids = followed_ids if followed_ids else [user_id]
+        exclusion_ids = excluded_ids if excluded_ids else [user_id]
 
         # Optimized query to get popular content from non-followed users
         # This uses a scoring algorithm based on engagement metrics

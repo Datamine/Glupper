@@ -293,3 +293,108 @@ async def unfollow_user(follower_id: UUID, followee_id: UUID) -> bool:
     await invalidate_user_profile_cache(followee_id)
 
     return True
+
+
+async def mute_user(muter_id: UUID, muted_id: UUID) -> bool:
+    """Mute a user"""
+    if muter_id == muted_id:
+        return False
+
+    async with pool.acquire() as conn, conn.transaction():
+        # Check if already muted
+        existing = await conn.fetchval(
+            """
+            SELECT id FROM mutes
+            WHERE muter_id = $1 AND muted_id = $2
+        """,
+            muter_id,
+            muted_id,
+        )
+
+        if existing:
+            return False
+
+        # Create mute relationship
+        mute_id = uuid4()
+        now = datetime.now(UTC)
+        await conn.execute(
+            """
+            INSERT INTO mutes (id, muter_id, muted_id, created_at)
+            VALUES ($1, $2, $3, $4)
+        """,
+            mute_id,
+            muter_id,
+            muted_id,
+            now,
+        )
+
+    return True
+
+
+async def unmute_user(muter_id: UUID, muted_id: UUID) -> bool:
+    """Unmute a user"""
+    if muter_id == muted_id:
+        return False
+
+    async with pool.acquire() as conn, conn.transaction():
+        # Check if muted
+        existing = await conn.fetchval(
+            """
+            SELECT id FROM mutes
+            WHERE muter_id = $1 AND muted_id = $2
+        """,
+            muter_id,
+            muted_id,
+        )
+
+        if not existing:
+            return False
+
+        # Delete mute relationship
+        await conn.execute(
+            """
+            DELETE FROM mutes
+            WHERE muter_id = $1 AND muted_id = $2
+        """,
+            muter_id,
+            muted_id,
+        )
+
+    return True
+
+
+async def get_muted_users(user_id: UUID, limit: int = 50, offset: int = 0) -> list[dict]:
+    """Get users that this user has muted"""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                u.id, u.username, u.profile_picture_url, u.bio,
+                u.follower_count, u.following_count, m.created_at as muted_at
+            FROM mutes m
+            JOIN users u ON m.muted_id = u.id
+            WHERE m.muter_id = $1
+            ORDER BY m.created_at DESC
+            LIMIT $2 OFFSET $3
+        """,
+            user_id,
+            limit,
+            offset,
+        )
+
+    return [dict(row) for row in rows]
+
+
+async def is_user_muted(muter_id: UUID, muted_id: UUID) -> bool:
+    """Check if a user is muted by another user"""
+    async with pool.acquire() as conn:
+        exists = await conn.fetchval(
+            """
+            SELECT 1 FROM mutes
+            WHERE muter_id = $1 AND muted_id = $2
+        """,
+            muter_id,
+            muted_id,
+        )
+
+    return bool(exists)

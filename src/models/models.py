@@ -48,6 +48,13 @@ class Follow(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Mute(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    muter_id: UUID  # User who mutes
+    muted_id: UUID  # User being muted
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Message(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     sender_id: UUID  # User who sent the message

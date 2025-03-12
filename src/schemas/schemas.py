@@ -106,6 +106,19 @@ class TrendingTopic(BaseModel):
     post_count: int
 
 
+class MuteResponse(BaseModel):
+    user_id: UUID
+    username: str
+    profile_picture_url: Optional[str] = None
+    bio: Optional[str] = None
+    muted_at: datetime
+    
+
+class MutedUsersResponse(BaseModel):
+    users: list[MuteResponse]
+    total: int
+
+
 # Message Schemas
 class MessageCreate(BaseModel):
     recipient_id: UUID

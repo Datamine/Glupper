@@ -119,6 +119,19 @@ async def _create_tables():
             CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON follows(follower_id);
             CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id);
         """)
+        
+        # Mutes table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS mutes (
+                id UUID PRIMARY KEY,
+                muter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                muted_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMP NOT NULL,
+                UNIQUE(muter_id, muted_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mutes_muter_id ON mutes(muter_id);
+            CREATE INDEX IF NOT EXISTS idx_mutes_muted_id ON mutes(muted_id);
+        """)
 
         # Archived URLs table
         await conn.execute("""
@@ -168,14 +181,18 @@ async def get_user_timeline_posts(
 
     This uses a complex but efficient query that:
     1. Fetches posts from followed users + own posts
-    2. Uses cursor-based pagination for performance
-    3. Includes necessary post metadata in a single query
+    2. Excludes posts from muted users
+    3. Uses cursor-based pagination for performance
+    4. Includes necessary post metadata in a single query
     """
     async with pool.acquire() as conn:
-        # Subquery to get IDs of users being followed
+        # Subquery to get IDs of users being followed and muted users
         query = """
         WITH followed_users AS (
             SELECT followee_id FROM follows WHERE follower_id = $1
+        ),
+        muted_users AS (
+            SELECT muted_id FROM mutes WHERE muter_id = $1
         )
         SELECT
             p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
@@ -186,6 +203,7 @@ async def get_user_timeline_posts(
         JOIN users u ON p.user_id = u.id
         WHERE (p.user_id IN (SELECT followee_id FROM followed_users)
            OR p.user_id = $1)
+           AND p.user_id NOT IN (SELECT muted_id FROM muted_users)  -- Exclude muted users
            AND p.is_comment = FALSE
         """
 
