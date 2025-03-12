@@ -1,0 +1,5 @@
+# Dependencies for the ArchiveBox backend
+boto3==1.28.38
+httpx==0.24.1
+psycopg2-binary==2.9.7
+archivebox==0.7.2

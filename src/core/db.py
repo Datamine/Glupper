@@ -126,11 +126,14 @@ async def _create_tables():
                 id SERIAL PRIMARY KEY,
                 post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
                 original_url TEXT NOT NULL,
-                archived_url TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL
+                archive_id TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                UNIQUE(post_id, original_url)
             );
             CREATE INDEX IF NOT EXISTS idx_archived_urls_post_id ON archived_urls(post_id);
             CREATE INDEX IF NOT EXISTS idx_archived_urls_original_url ON archived_urls(original_url);
+            CREATE INDEX IF NOT EXISTS idx_archived_urls_archive_id ON archived_urls(archive_id);
         """)
 
 

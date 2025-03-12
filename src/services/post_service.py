@@ -57,19 +57,21 @@ async def create_post(user_id: UUID, title: str, url: str, media_urls: Optional[
     if result["media_urls"] is not None:
         result["media_urls"] = list(result["media_urls"])
 
-    # Archive URL immediately for direct URL posts
-    # Makes sure the URL gets archived right away
-    await process_post_urls(
+    # Queue URL for archiving
+    # This will add the URL to the SQS queue for processing by the archivebox server
+    archive_jobs = await process_post_urls(
         post_id=post_id,
         user_id=user_id,
         content=url,  # for top-level posts, primarily archive the URL
         media_urls=media_urls or [],
+        title=title,  # pass the title for better archiving
     )
     
-    # Get the archived URL to include in the response
-    archived_urls = await get_archived_urls_for_post(post_id)
-    if archived_urls:
-        result["archived_urls"] = archived_urls
+    # Add archive status to the response
+    # This will initially show pending status
+    archive_status = await get_archive_status(post_id)
+    if archive_status:
+        result["archive_status"] = archive_status
 
     # Use fanout-on-write to push the post to all followers' timelines in Redis
     # This is a much more efficient approach than invalidating caches
@@ -110,15 +112,46 @@ async def get_post(post_id: UUID) -> Optional[dict]:
     if not post:
         return None
 
-    # Get archived URLs for the post
+    # Get archived URLs for the post (only completed ones)
     archived_urls = await get_archived_urls_for_post(post_id)
     if archived_urls:
         post["archived_urls"] = archived_urls
+        
+    # Also get archive status for all URLs (including pending ones)
+    archive_status = await get_archive_status(post_id)
+    if archive_status:
+        post["archive_status"] = archive_status
 
     # Cache the result
     await cache_post(post_id, post)
 
     return post
+
+
+async def delete_post(post_id: UUID) -> bool:
+    """Delete a post and its archives"""
+    try:
+        # Delete the post from the database
+        # This will cascade to likes, comments, etc.
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                DELETE FROM posts
+                WHERE id = $1
+                """,
+                post_id,
+            )
+            
+        # Delete archives for this post
+        await delete_archives_for_post(post_id)
+        
+        # Invalidate cache
+        await invalidate_post_cache(post_id)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error deleting post {post_id}: {str(e)}")
+        return False
 
 
 async def create_comment(

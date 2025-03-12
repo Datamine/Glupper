@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api import auth, feed, posts, users
+from src.api import archives, auth, feed, posts, users
 from src.core.cache import close_cache, init_cache
 from src.core.db import close_db, init_db
 
@@ -26,6 +26,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(posts.router)
 app.include_router(feed.router)
+app.include_router(archives.router)
 
 
 @app.on_event("startup")
