@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 
 from src.config_secrets import (
     ARCHIVE_QUEUE_URL,
+    ARCHIVE_DEAD_LETTER_QUEUE_URL,
     AWS_ACCESS_KEY_ID,
     AWS_REGION,
     AWS_SECRET_ACCESS_KEY,
@@ -77,6 +78,49 @@ def send_archive_job_to_queue(
         logger.info(f"Sent archive job {job_id} to queue for URL: {url}, post: {post_id}")
     except ClientError:
         logger.exception("Failed to send archive job to queue.")
+        return None
+    else:
+        return response
+
+
+def send_delete_job_to_queue(job_id: str) -> Optional[dict[str, Any]]:
+    """
+    Send a message to the SQS queue to delete an archive
+
+    Args:
+        job_id: Unique identifier for the archive job to delete
+
+    Returns:
+        The SQS response if successful, None otherwise
+    """
+    try:
+        message_body = {
+            "archive_id": job_id,
+            "timestamp": json.dumps(
+                {"__datetime__": True, "value": str(uuid.uuid4())},
+            ),
+        }
+
+        response = sqs_client.send_message(
+            QueueUrl=ARCHIVE_DEAD_LETTER_QUEUE_URL,
+            MessageBody=json.dumps(message_body),
+            MessageAttributes={
+                "JobType": {
+                    "DataType": "String",
+                    "StringValue": "delete",
+                },
+                "JobId": {
+                    "DataType": "String",
+                    "StringValue": job_id,
+                },
+            },
+            MessageGroupId="delete_jobs",  # For FIFO queues
+            MessageDeduplicationId=f"delete-{job_id}",  # For FIFO queues
+        )
+
+        logger.info(f"Sent delete job for archive {job_id} to queue")
+    except ClientError:
+        logger.exception("Failed to send delete job to queue.")
         return None
     else:
         return response

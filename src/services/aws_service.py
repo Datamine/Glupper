@@ -1,8 +1,9 @@
 """
 AWS services for Glupper.
 
-This module handles interactions with AWS services like S3 and SQS.
-This service acts as a facade over the specialized s3_service and sqs_service modules.
+This module provides high-level functions for archiving operations
+by delegating to specialized s3_service and sqs_service modules.
+It serves as a facade layer for backward compatibility with existing code.
 """
 import json
 import logging
@@ -10,7 +11,7 @@ import uuid
 from typing import Dict, Optional, Union
 from uuid import UUID
 
-from src.config_secrets import ARCHIVE_DEAD_LETTER_QUEUE_URL
+from src.config_secrets import ARCHIVE_COMPLETE_MARKER
 from src.services.s3_service import (
     check_archive_exists as s3_check_archive_exists,
     get_archive_from_s3,
@@ -46,7 +47,7 @@ def check_archive_exists(archive_id: Union[UUID, str]) -> bool:
     Returns:
         True if the archive exists and is complete, False otherwise
     """
-    return s3_check_archive_exists(str(archive_id), "complete.json")
+    return s3_check_archive_exists(str(archive_id), ARCHIVE_COMPLETE_MARKER)
 
 
 def get_archive_metadata(archive_id: Union[UUID, str]) -> Optional[Dict]:
@@ -59,7 +60,7 @@ def get_archive_metadata(archive_id: Union[UUID, str]) -> Optional[Dict]:
     Returns:
         Dictionary with archive metadata if found, None otherwise
     """
-    data = get_archive_from_s3(str(archive_id), "complete.json")
+    data = get_archive_from_s3(str(archive_id), ARCHIVE_COMPLETE_MARKER)
     if data:
         try:
             return json.loads(data.decode("utf-8"))
@@ -126,25 +127,13 @@ def queue_archive_for_deletion(archive_id: Union[UUID, str]) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    from src.services.sqs_service import sqs_client
-    
-    if not sqs_client:
-        logger.error("SQS client not initialized")
-        return False
+    from src.services.sqs_service import send_delete_job_to_queue
         
     try:
-        # Prepare the message
-        message = {
-            "archive_id": str(archive_id),
-        }
+        str_archive_id = str(archive_id)
+        response = send_delete_job_to_queue(str_archive_id)
         
-        # Send the message to SQS
-        response = sqs_client.send_message(
-            QueueUrl=ARCHIVE_DEAD_LETTER_QUEUE_URL,
-            MessageBody=json.dumps(message),
-        )
-        
-        if response.get("MessageId"):
+        if response:
             logger.info(f"Queued archive {archive_id} for deletion")
             return True
         else:
