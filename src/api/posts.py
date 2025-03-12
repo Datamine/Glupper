@@ -1,13 +1,15 @@
-from typing import Annotated, List
+import base64
+from typing import Annotated, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.core.auth import get_current_user
 from src.core.db import pool
 from src.models.models import User
 from src.schemas.schemas import (
     CommentCreate,
+    FeedResponse,
     PostCreate,
     PostDetailResponse,
     PostResponse,
@@ -16,6 +18,7 @@ from src.services.post_service import (
     create_comment,
     create_post,
     get_post,
+    get_user_liked_posts,
     get_user_posts,
     like_post,
     repost,
@@ -259,3 +262,55 @@ async def get_posts_by_user(
     """
     posts = await get_user_posts(user_id, limit, offset)
     return posts
+
+
+@router.get("/likes", status_code=status.HTTP_200_OK)
+async def get_liked_posts(
+    cursor: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=50),
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> FeedResponse:
+    """
+    Get posts that the authenticated user has liked.
+    
+    Parameters:
+    - **cursor**: Optional base64 encoded UUID cursor for pagination
+    - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
+    - **current_user**: User object from token authentication dependency
+    
+    Returns:
+    - **FeedResponse**: List of liked posts and pagination cursor
+    
+    Raises:
+    - **401 Unauthorized**: If not authenticated
+    
+    Notes:
+    - Uses cursor-based pagination for optimal performance
+    - The cursor is a base64 encoded post ID
+    - Posts are returned in reverse chronological order (most recently liked first)
+    """
+    # Decode cursor if provided
+    cursor_uuid = None
+    if cursor:
+        try:
+            cursor_bytes = base64.b64decode(cursor.encode("utf-8"))
+            cursor_uuid = UUID(cursor_bytes.decode("utf-8"))
+        except:
+            pass
+    
+    # Get liked posts from the service layer
+    posts, next_cursor_uuid = await get_user_liked_posts(
+        user_id=current_user.id,
+        limit=limit,
+        cursor=cursor_uuid
+    )
+    
+    # Generate the next cursor if there are more results
+    next_cursor = None
+    if next_cursor_uuid:
+        next_cursor = base64.b64encode(str(next_cursor_uuid).encode("utf-8")).decode("utf-8")
+    
+    return {
+        "posts": posts,
+        "next_cursor": next_cursor,
+    }

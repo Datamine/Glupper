@@ -1,5 +1,5 @@
 import base64
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/v1/feed", tags=["feed"])
 async def home_timeline(
     cursor: Optional[str] = None,
     limit: int = Query(20, ge=1, le=50),
+    feed_type: Literal["chronological", "for_you"] = "chronological",
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedResponse:
     """
@@ -33,6 +34,7 @@ async def home_timeline(
     Parameters:
     - **cursor**: Optional base64 encoded pagination cursor
     - **limit**: Maximum number of posts to return (default: 20, min: 1, max: 50)
+    - **feed_type**: Feed algorithm type - "chronological" (default) or "for_you"
     - **current_user**: User object from token authentication dependency
     
     Returns:
@@ -44,6 +46,8 @@ async def home_timeline(
     Notes:
     - Uses cursor-based pagination for optimal performance
     - The cursor is a base64 encoded post ID used as a starting point
+    - When feed_type is "chronological", shows posts from followed users in time order
+    - When feed_type is "for_you", shows a personalized feed with recommended content
     """
     # Decode cursor if provided
     before_id = None
@@ -66,7 +70,13 @@ async def home_timeline(
         except:
             pass
     
-    posts = await get_timeline_from_redis(current_user.id, limit, start_idx)
+    # Pass the feed_type to the service layer
+    posts = await get_timeline_from_redis(
+        current_user.id, 
+        limit, 
+        start_idx, 
+        feed_type
+    )
 
     # Generate next cursor
     next_cursor = None
@@ -78,6 +88,7 @@ async def home_timeline(
     return {
         "posts": posts,
         "next_cursor": next_cursor,
+        "feed_type": feed_type,  # Include feed type in response
     }
 
 

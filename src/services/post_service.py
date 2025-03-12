@@ -507,3 +507,99 @@ async def get_user_posts(user_id: UUID, limit: int = 20, offset: int = 0) -> lis
         result.append(post)
 
     return result
+
+
+async def get_user_liked_posts(user_id: UUID, limit: int = 20, cursor: Optional[UUID] = None) -> tuple[list[dict], Optional[UUID]]:
+    """
+    Get posts that a user has liked with cursor-based pagination
+    
+    Returns a tuple of (posts, next_cursor) where next_cursor is None if there are no more posts
+    """
+    async with pool.acquire() as conn:
+        # Prepare the base query
+        query_parts = [
+            """
+            WITH liked_posts AS (
+                SELECT
+                    p.id, p.title, p.url, p.content, p.media_urls, p.like_count, p.comment_count,
+                    p.repost_count, p.is_repost, p.is_comment, p.original_post_id, p.parent_post_id, p.created_at,
+                    p.user_id as post_author_id, u.username, u.profile_picture_url,
+                    l.created_at as liked_at
+                FROM likes l
+                JOIN posts p ON l.post_id = p.id
+                JOIN users u ON p.user_id = u.id
+                WHERE l.user_id = $1
+            """
+        ]
+        
+        # Add cursor condition if provided
+        params = [user_id, limit]
+        if cursor:
+            query_parts.append(
+                """
+                AND (
+                    l.created_at < (SELECT created_at FROM likes WHERE user_id = $1 AND post_id = $3)
+                    OR (
+                        l.created_at = (SELECT created_at FROM likes WHERE user_id = $1 AND post_id = $3)
+                        AND l.post_id < $3
+                    )
+                )
+                """
+            )
+            params.append(cursor)
+        
+        # Complete the query with ordering and limit
+        query_parts.append(
+            """
+            ORDER BY l.created_at DESC, l.post_id DESC
+            LIMIT $2
+            )
+            SELECT * FROM liked_posts
+            """
+        )
+        
+        # Execute the query
+        full_query = "\n".join(query_parts)
+        rows = await conn.fetch(full_query, *params)
+        
+        # Process the results
+        posts = []
+        for row in rows:
+            post = dict(row)
+            if post["media_urls"] is not None:
+                post["media_urls"] = list(post["media_urls"])
+                
+            # Mark as liked by the user (since these are all liked posts)
+            post["liked_by_user"] = True
+                
+            # Get archived URLs for each post
+            archived_urls = await get_archived_urls_for_post(post["id"])
+            if archived_urls:
+                post["archived_urls"] = archived_urls
+                
+            # For reposts, enhance with original post information
+            if post["is_repost"] and post["original_post_id"]:
+                original_post_info = await conn.fetchrow(
+                    """
+                    SELECT 
+                        u.id as original_user_id, 
+                        u.username as original_username, 
+                        u.profile_picture_url as original_profile_picture_url
+                    FROM posts p
+                    JOIN users u ON p.user_id = u.id
+                    WHERE p.id = $1
+                    """,
+                    post["original_post_id"]
+                )
+                
+                if original_post_info:
+                    post.update(dict(original_post_info))
+                
+            posts.append(post)
+        
+        # Determine the next cursor
+        next_cursor = None
+        if len(posts) == limit:
+            next_cursor = posts[-1]["id"]
+            
+        return posts, next_cursor

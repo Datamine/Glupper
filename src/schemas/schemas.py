@@ -99,6 +99,7 @@ class PostDetailResponse(PostResponse):
 class FeedResponse(BaseModel):
     posts: list[PostResponse]
     next_cursor: Optional[str] = None
+    feed_type: Optional[str] = None  # "chronological" or "for_you"
 
 
 class TrendingTopic(BaseModel):
