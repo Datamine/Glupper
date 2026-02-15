@@ -6,14 +6,12 @@ This document serves as a guide to the Glupper codebase structure, patterns, and
 
 ```
 /glupper/
-├── archivebox_backend/    # Archiving service integration
 ├── src/                   # Main application code
 │   ├── api/               # API endpoints
 │   ├── core/              # Core infrastructure
 │   ├── models/            # Database models
 │   ├── schemas/           # Pydantic schemas
 │   ├── services/          # Business logic
-│   │   └── queues/        # Message queue services
 │   └── utils/             # Utility functions
 ├── run.py                 # Application entry point
 ├── __init__.py
