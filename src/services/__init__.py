@@ -1,1 +1,1 @@
-"""Service module initialization"""
+"""Service layer for Glupper backend."""

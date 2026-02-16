@@ -1,99 +1,141 @@
-# Glupper
+# Glupper Backend
 
-High-performance Twitter-like backend built with Python, FastAPI, and PostgreSQL.
+Glupper is an invite-and-vouch trust graph for verifying that online accounts are controlled by real people.
 
-## Features
+## Product Scope (Current)
 
-- **High-performance architecture**
-  - FastAPI for asynchronous API endpoints
-  - PostgreSQL with optimized queries and indexes
-  - Redis for caching frequently accessed data
-  - Cursor-based pagination for optimal performance
+### Purpose
 
-- **Core functionality**
-  - User authentication with JWT
-  - Posts, comments, likes, and reposts
-  - Follow/unfollow users
-  - Home timeline feed
-  - Explore/trending feed algorithm
-  - Trending topics
+- Establish social proof of real humans through in-person vouches.
+- Let users keep pseudonyms while still building public trust signals.
+- Show trust age (`trust_days`) publicly.
 
-- **Technical highlights**
-  - Asynchronous database access with `asyncpg`
-  - Efficient caching strategy with `redis`
-  - Well-structured modular architecture
-  - Type hints throughout for better reliability
+### Trust Model
 
-## Getting Started
+- Bootstrap: platform admin creates initial trusted users.
+- Growth: active users create invite codes and sponsor new users.
+- Trust timer: starts at account creation or successful revouch and accumulates in days.
+- Public profile: exposes account status, sponsor relationship, trust timer, and verified linked social accounts.
 
-### Prerequisites
+### Moderation Model
 
-- Python 3.12+
-- PostgreSQL
-- Redis (optional but recommended for performance)
-- `uv` package manager (faster alternative to pip)
+- Reports are handled externally through GitHub issues (not handled by backend workflows).
+- Conviction is binary.
+- If an account is convicted as bot:
+  - Convicted account is permanently `banned`.
+  - Direct sponsor receives one demerit.
+  - All downstream descendants become `revouch_required` (not immediately permanently banned) and lose trust timer.
+  - Descendants cannot issue invites while in `revouch_required` state.
 
-### Installation
+### Recovery Model (Downstream of a Convicted Upstream)
 
-1. Clone this repository:
-   ```
-   git clone https://github.com/yourusername/glupper.git
-   cd glupper
-   ```
+Downstream accounts can recover by revouching from a different active sponsor. To reduce fraud/ring recovery:
 
-2. Install dependencies with `uv`:
-   ```
-   uv sync
-   ```
+- Recovery requires a different sponsor than the previous sponsor.
+- Recovery can be blocked by a cooldown (`RECOVERY_COOLDOWN_HOURS`, default 72h).
+- Recovery sponsor must meet minimum trust age (`RECOVERY_SPONSOR_MIN_TRUST_DAYS`, default 30).
+- Recovery sponsor must be low risk by demerits (`RECOVERY_SPONSOR_MAX_DEMERITS`, default 0).
+- Successful recovery resets trust timer and sets account back to `active`.
 
-3. Set up environment variables (or create a `.env` file):
-   ```
-   export DATABASE_URL=postgresql://postgres:postgres@localhost/glupper
-   export REDIS_URL=redis://localhost:6379/0
-   export SECRET_KEY=your_secret_key_here
-   ```
+### Sponsor Inactivity Model
 
-4. Run the application:
-   ```
-   python run.py
-   ```
+- Admin can run sponsor inactivity expiration.
+- Descendants of inactive sponsors become `revouch_required` and must get a fresh vouch.
 
-5. Access the API documentation at http://localhost:8000/docs
+### Social Identity Verification
 
-## Project Structure
+- Linked social handles require OAuth proof of ownership.
+- MVP implementation currently supports GitHub linkage verification.
+- Google OAuth is supported for account sign-in/registration.
 
+## Explicit Decisions in Scope
+
+- Pseudonyms are allowed.
+- One-person-one-account enforcement is deferred (not in MVP).
+- No appeals process in MVP.
+- Historical moderation/event data is retained.
+- Redis maintains a banned-account dataset for fast lookups.
+
+## Out of Scope (Current)
+
+- Automated bot scoring/classification.
+- In-app reporting/review workflow (GitHub issues used instead).
+- Legal/privacy policy workflows.
+- Strong Sybil resistance beyond invite graph + recovery gates.
+
+## Architecture
+
+- FastAPI API server
+- PostgreSQL via asyncpg
+- Redis for ban cache
+- JWT auth
+
+## Key Data Concepts
+
+- `accounts`: identity, sponsor link, status, trust and recovery timestamps, demerits.
+- `invite_codes`: sponsor-issued vouch tokens.
+- `social_identities`: verified external handles.
+- `account_events`: immutable event log for moderation and lifecycle actions.
+
+## Main API Surface
+
+### Auth
+
+- `POST /api/v1/auth/register/password`
+- `POST /api/v1/auth/register/google`
+- `POST /api/v1/auth/login/password`
+- `GET /api/v1/auth/me`
+
+### Accounts
+
+- `GET /api/v1/accounts/{username}`
+- `GET /api/v1/accounts/me`
+- `POST /api/v1/accounts/me/revouch`
+- `POST /api/v1/accounts/me/heartbeat`
+
+### Invites
+
+- `POST /api/v1/invites`
+- `GET /api/v1/invites/mine`
+
+### Social Accounts
+
+- `POST /api/v1/social-accounts/link`
+- `GET /api/v1/social-accounts/mine`
+
+### Moderation/Admin
+
+- `POST /api/v1/moderation/bootstrap-user` (admin key)
+- `POST /api/v1/moderation/convict` (admin key)
+- `POST /api/v1/moderation/expire-inactive-sponsors` (admin key)
+- `GET /api/v1/moderation/banned/{account_id}` (admin key)
+
+## Configuration (Important)
+
+Defined in `src/config_secrets.py`:
+
+- `ADMIN_BOOTSTRAP_KEY`
+- `RECOVERY_COOLDOWN_HOURS`
+- `RECOVERY_SPONSOR_MIN_TRUST_DAYS`
+- `RECOVERY_SPONSOR_MAX_DEMERITS`
+- JWT, DB, and Redis settings
+
+## Local Run
+
+1. Install dependencies:
+
+```bash
+uv sync
 ```
-glupper/
-├── app/
-│   ├── api/           # API endpoints
-│   ├── core/          # Core functionality (auth, db, cache)
-│   ├── models/        # Data models
-│   ├── schemas/       # API schemas (request/response)
-│   ├── services/      # Business logic
-│   └── main.py        # FastAPI application
+
+2. Update config values in `src/config_secrets.py`.
+
+3. Start server:
+
+```bash
+python run.py --host 127.0.0.1 --port 8000
 ```
 
-## API Endpoints
+4. Open docs:
 
-The API is divided into several sections:
-
-- `/auth` - Authentication endpoints (register, login)
-- `/users` - User management (profile, followers, following)
-- `/posts` - Post operations (create, comment, like, repost)
-- `/feed` - Feed algorithms (home timeline, explore, trending)
-
-## Performance Optimizations
-
-- Efficient database queries with proper indexing
-- Redis caching for timeline, post data, and user profiles
-- Cursor-based pagination for scalable timeline fetching
-- Optimized timeline algorithm for feed generation
-- Connection pooling for database and cache connections
-
-## Future Enhancements
-
-- Full-text search for posts and users
-- Media upload and processing
-- Notifications system
-- Direct messaging
-- Analytics and metrics
+- `http://127.0.0.1:8000/docs`

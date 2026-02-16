@@ -1,7 +1,7 @@
 [project]
 name = "glupper"
 version = "0.1.0"
-description = "High-performance Twitter clone backend"
+description = "Trust-network backend for invite-based human verification"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
