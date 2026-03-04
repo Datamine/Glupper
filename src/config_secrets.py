@@ -21,3 +21,12 @@ ADMIN_BOOTSTRAP_KEY = "change-me-admin-key"
 RECOVERY_COOLDOWN_HOURS = 72
 RECOVERY_SPONSOR_MIN_TRUST_DAYS = 30
 RECOVERY_SPONSOR_MAX_DEMERITS = 0
+
+# Neptune graph configuration
+# Leave empty to disable Neptune-backed graph reads/writes in local development.
+NEPTUNE_ENDPOINT = ""
+NEPTUNE_OPENCYPHER_PATH = "/openCypher"
+NEPTUNE_QUERY_TIMEOUT_SECONDS = 8.0
+
+# Graph explorer caching
+GRAPH_CACHE_TTL_SECONDS = 30

@@ -12,6 +12,7 @@ from src.config_secrets import RECOVERY_COOLDOWN_HOURS, RECOVERY_SPONSOR_MAX_DEM
 from src.core.auth import get_password_hash, verify_password
 from src.core.db import get_connection
 from src.models.models import Account, AccountStatus, AuthProvider, InviteCode, SocialIdentity
+from src.services.graph_service import sync_account_node, sync_account_statuses, sync_social_identity
 
 
 class ServiceError(Exception):
@@ -40,10 +41,11 @@ class InvalidAccountStateError(ServiceError):
 
 async def create_bootstrap_account(username: str, email: EmailStr, password: str) -> Account:
     """Create an initial trusted account without an invite code."""
+    created_account: Account | None = None
     async with get_connection() as connection:
         async with connection.transaction():
             await _ensure_unique_account(connection, username=username, email=email)
-            account = await _insert_account(
+            created_account = await _insert_account(
                 connection=connection,
                 username=username,
                 email=email,
@@ -52,19 +54,24 @@ async def create_bootstrap_account(username: str, email: EmailStr, password: str
                 auth_provider_subject=None,
                 sponsor_id=None,
             )
-            await _insert_event(connection, account.id, "bootstrap_account", {"username": username})
-            return account
+            await _insert_event(connection, created_account.id, "bootstrap_account", {"username": username})
+
+    if created_account is None:
+        raise ServiceError("Bootstrap account transaction failed")
+    await sync_account_node(created_account)
+    return created_account
 
 
 async def register_password_account(username: str, email: EmailStr, password: str, invite_code: str) -> Account:
     """Create account through invite code using password auth."""
+    created_account: Account | None = None
     async with get_connection() as connection:
         async with connection.transaction():
             sponsor_id = await _consume_invite_code(connection, invite_code)
             await _ensure_active_sponsor(connection, sponsor_id)
             await _ensure_unique_account(connection, username=username, email=email)
 
-            account = await _insert_account(
+            created_account = await _insert_account(
                 connection=connection,
                 username=username,
                 email=email,
@@ -73,8 +80,12 @@ async def register_password_account(username: str, email: EmailStr, password: st
                 auth_provider_subject=None,
                 sponsor_id=sponsor_id,
             )
-            await _insert_event(connection, account.id, "registered_with_password", {"sponsor_id": str(sponsor_id)})
-            return account
+            await _insert_event(connection, created_account.id, "registered_with_password", {"sponsor_id": str(sponsor_id)})
+
+    if created_account is None:
+        raise ServiceError("Password registration transaction failed")
+    await sync_account_node(created_account)
+    return created_account
 
 
 async def register_google_account(
@@ -84,13 +95,14 @@ async def register_google_account(
     invite_code: str,
 ) -> Account:
     """Create account through invite code using Google OAuth subject."""
+    created_account: Account | None = None
     async with get_connection() as connection:
         async with connection.transaction():
             sponsor_id = await _consume_invite_code(connection, invite_code)
             await _ensure_active_sponsor(connection, sponsor_id)
             await _ensure_unique_account(connection, username=username, email=email, google_subject=google_subject)
 
-            account = await _insert_account(
+            created_account = await _insert_account(
                 connection=connection,
                 username=username,
                 email=email,
@@ -99,8 +111,12 @@ async def register_google_account(
                 auth_provider_subject=google_subject,
                 sponsor_id=sponsor_id,
             )
-            await _insert_event(connection, account.id, "registered_with_google", {"sponsor_id": str(sponsor_id)})
-            return account
+            await _insert_event(connection, created_account.id, "registered_with_google", {"sponsor_id": str(sponsor_id)})
+
+    if created_account is None:
+        raise ServiceError("Google registration transaction failed")
+    await sync_account_node(created_account)
+    return created_account
 
 
 async def get_account_by_id(account_id: UUID) -> Account | None:
@@ -271,11 +287,20 @@ async def link_social_identity(account_id: UUID, provider: str, handle: str, pro
 
     if row is None:
         raise ServiceError("Social identity linkage failed")
-    return _social_from_record(row)
+    identity = _social_from_record(row)
+    await sync_social_identity(
+        account_id=identity.account_id,
+        provider=identity.provider,
+        handle=identity.handle,
+        provider_user_id=identity.provider_user_id,
+        verified_at=identity.verified_at,
+    )
+    return identity
 
 
 async def revouch_account(account_id: UUID, invite_code: str) -> Account:
     """Assign a new sponsor and reset trust timer for revouch-required accounts."""
+    updated_account: Account | None = None
     async with get_connection() as connection:
         async with connection.transaction():
             account_row = await connection.fetchrow("SELECT * FROM accounts WHERE id = $1 FOR UPDATE", account_id)
@@ -315,11 +340,21 @@ async def revouch_account(account_id: UUID, invite_code: str) -> Account:
                 raise ServiceError("Failed to revouch account")
 
             await _insert_event(connection, account_id, "revouched", {"sponsor_id": str(sponsor_id)})
-            return _account_from_record(row)
+            updated_account = _account_from_record(row)
+
+    if updated_account is None:
+        raise ServiceError("Revouch transaction failed")
+    await sync_account_node(updated_account)
+    return updated_account
 
 
 async def convict_and_ban_tree(account_id: UUID, reason: str) -> tuple[UUID, list[UUID], UUID | None]:
     """Ban convicted root account, mark downstream as revouch_required, and penalize direct sponsor."""
+    banned_root_account_id: UUID | None = None
+    downstream_account_ids: list[UUID] = []
+    penalized_sponsor_id: UUID | None = None
+    downstream_recovery_eligible_at: datetime | None = None
+
     async with get_connection() as connection:
         async with connection.transaction():
             convicted_row = await connection.fetchrow("SELECT * FROM accounts WHERE id = $1 FOR UPDATE", account_id)
@@ -382,7 +417,6 @@ async def convict_and_ban_tree(account_id: UUID, reason: str) -> tuple[UUID, lis
                 subtree_ids,
             )
 
-            penalized_sponsor_id: UUID | None = None
             if convicted_account.sponsor_id is not None:
                 penalized_sponsor_id = convicted_account.sponsor_id
                 await connection.execute(
@@ -419,12 +453,36 @@ async def convict_and_ban_tree(account_id: UUID, reason: str) -> tuple[UUID, lis
                     },
                 )
 
-            return account_id, downstream_ids, penalized_sponsor_id
+            banned_root_account_id = account_id
+            downstream_account_ids = downstream_ids
+            downstream_recovery_eligible_at = recovery_eligible_at
+
+    if banned_root_account_id is None:
+        raise ServiceError("Conviction transaction failed")
+
+    await sync_account_statuses(
+        account_ids=[banned_root_account_id],
+        status=AccountStatus.BANNED,
+        trust_started_at=None,
+        recovery_eligible_at=None,
+    )
+    await sync_account_statuses(
+        account_ids=downstream_account_ids,
+        status=AccountStatus.REVOUCH_REQUIRED,
+        trust_started_at=None,
+        recovery_eligible_at=downstream_recovery_eligible_at,
+    )
+    if penalized_sponsor_id is not None:
+        penalized_sponsor = await get_account_by_id(penalized_sponsor_id)
+        if penalized_sponsor is not None:
+            await sync_account_node(penalized_sponsor)
+    return banned_root_account_id, downstream_account_ids, penalized_sponsor_id
 
 
 async def expire_inactive_sponsor_trees(inactivity_days: int) -> list[UUID]:
     """Mark descendants as revouch_required when sponsor has been inactive too long."""
     cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=inactivity_days)
+    marked_ids: list[UUID] = []
 
     async with get_connection() as connection:
         async with connection.transaction():
@@ -466,7 +524,13 @@ async def expire_inactive_sponsor_trees(inactivity_days: int) -> list[UUID]:
                     "revouch_required_due_to_inactive_sponsor",
                     {"inactive_days": inactivity_days},
                 )
-            return marked_ids
+    await sync_account_statuses(
+        account_ids=marked_ids,
+        status=AccountStatus.REVOUCH_REQUIRED,
+        trust_started_at=None,
+        recovery_eligible_at=None,
+    )
+    return marked_ids
 
 
 def account_trust_days(account: Account) -> int:

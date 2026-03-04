@@ -3,9 +3,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api import auth, invites, moderation, social_accounts, users
+from src.api import auth, graph, invites, moderation, social_accounts, users
 from src.core.cache import close_cache, init_cache
 from src.core.db import close_db, init_db
+from src.core.graph_store import close_graph_store, init_graph_store
 
 app = FastAPI(
     title="Glupper API",
@@ -26,6 +27,7 @@ app.include_router(users.router)
 app.include_router(invites.router)
 app.include_router(social_accounts.router)
 app.include_router(moderation.router)
+app.include_router(graph.router)
 
 
 @app.on_event("startup")
@@ -33,11 +35,13 @@ async def startup_event() -> None:
     """Initialize database and cache clients."""
     await init_db()
     await init_cache()
+    await init_graph_store()
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
     """Close database and cache clients."""
+    await close_graph_store()
     await close_db()
     await close_cache()
 

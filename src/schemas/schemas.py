@@ -134,3 +134,34 @@ class BannedAccountResponse(BaseModel):
     reason: str | None
     banned_at: datetime | None
     exists_in_cache: bool
+
+
+class GraphNodeResponse(BaseModel):
+    id: UUID
+    username: str | None = None
+    status: AccountStatus | None = None
+    demerit_count: int | None = None
+    trust_started_at: datetime | None = None
+    recovery_eligible_at: datetime | None = None
+
+
+class GraphEdgeResponse(BaseModel):
+    source: UUID
+    target: UUID
+    relationship: str
+    created_at: datetime | None = None
+
+
+class GraphNeighborhoodResponse(BaseModel):
+    center_account_id: UUID
+    depth: int
+    nodes: list[GraphNodeResponse]
+    edges: list[GraphEdgeResponse]
+
+
+class GraphPathResponse(BaseModel):
+    source_account_id: UUID
+    destination_account_id: UUID
+    found: bool
+    nodes: list[GraphNodeResponse]
+    edges: list[GraphEdgeResponse]
